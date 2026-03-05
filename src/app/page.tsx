@@ -11,10 +11,7 @@ import {
   AreaChart,
   Area,
   CartesianGrid,
-  LineChart,
-  Line,
   Legend,
-  ComposedChart,
 } from "recharts";
 
 /* ─── Types ─── */
@@ -378,12 +375,12 @@ export default function Dashboard() {
             </div>
           </div>
           {/* Tabs */}
-          <nav className="flex gap-1 mt-4 -mb-px">
+          <nav className="flex gap-1 mt-4 -mb-px overflow-x-auto scrollbar-hide">
             {tabs.map((t) => (
               <button
                 key={t.id}
                 onClick={() => setTab(t.id)}
-                className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
+                className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors whitespace-nowrap ${
                   tab === t.id
                     ? "bg-[#1d1d1f] text-white"
                     : "text-[#86868b] hover:text-[#1d1d1f] hover:bg-black/5"
@@ -516,11 +513,13 @@ export default function Dashboard() {
                         name === "hours" ? "Hours" : "Meetings",
                       ]}
                     />
+                    <Legend wrapperStyle={{ fontSize: 12 }} />
                     <Bar
                       dataKey="meetings"
                       fill="#0071e3"
                       radius={[6, 6, 0, 0]}
                       maxBarSize={32}
+                      name="Meetings"
                     />
                   </BarChart>
                 </ResponsiveContainer>
@@ -1221,18 +1220,33 @@ export default function Dashboard() {
 
             {history && (() => {
               const { yearly } = history;
+              const currentYear = new Date().getFullYear();
+              const fullYears = yearly.filter((y) => y.year < currentYear);
 
-              const peakEmailYear = [...yearly].sort((a, b) => (b.received + b.sent) - (a.received + a.sent))[0];
-              const peakMeetingYear = [...yearly].sort((a, b) => b.meetings - a.meetings)[0];
+              const peakEmailYear = [...fullYears].sort((a, b) => (b.received + b.sent) - (a.received + a.sent))[0];
+              const peakMeetingYear = [...fullYears].sort((a, b) => b.meetings - a.meetings)[0];
 
               // YoY for latest full year vs prior
-              const fullYears = yearly.filter((y) => y.year < new Date().getFullYear());
               const latestFull = fullYears[fullYears.length - 1];
               const priorFull = fullYears[fullYears.length - 2];
               const yoyEmail =
                 latestFull && priorFull && priorFull.received > 0
                   ? Math.round(((latestFull.received - priorFull.received) / priorFull.received) * 100)
                   : null;
+
+              // Averages based on full years only
+              const fullYearEmails = fullYears.reduce((s, y) => s + y.received + y.sent, 0);
+              const fullYearMeetings = fullYears.reduce((s, y) => s + y.meetings, 0);
+              const fullYearHours = fullYears.reduce((s, y) => s + y.meetingHours, 0);
+              const fullYearCount = Math.max(fullYears.length, 1);
+
+              // Recurring ratio across all full years
+              const totalRecurring = fullYears.reduce((s, y) => s + y.recurringMeetings, 0);
+              const totalMeetingsFull = fullYears.reduce((s, y) => s + y.meetings, 0);
+              const recurringPct = totalMeetingsFull > 0 ? Math.round((totalRecurring / totalMeetingsFull) * 100) : 0;
+
+              // Peak meeting hours year
+              const peakHoursYear = [...fullYears].sort((a, b) => b.meetingHours - a.meetingHours)[0];
 
               return (
                 <>
@@ -1250,8 +1264,8 @@ export default function Dashboard() {
                     />
                     <KpiCard
                       label="Avg / Year"
-                      value={Math.round(history.totalEmails / Math.max(yearly.length, 1)).toLocaleString()}
-                      sub={`emails · ${Math.round(history.totalMeetings / Math.max(yearly.length, 1)).toLocaleString()} meetings`}
+                      value={Math.round(fullYearEmails / fullYearCount).toLocaleString()}
+                      sub={`emails · ${Math.round(fullYearMeetings / fullYearCount).toLocaleString()} meetings`}
                     />
                     {yoyEmail !== null ? (
                       <KpiCard
@@ -1297,7 +1311,7 @@ export default function Dashboard() {
                             color: "#fff",
                             fontSize: 12,
                           }}
-                          formatter={(value) => [Number(value).toLocaleString(), undefined]}
+                          formatter={(value, name) => [Number(value).toLocaleString(), name]}
                           labelFormatter={(label) => `Year ${label}`}
                         />
                         <Legend wrapperStyle={{ fontSize: 12 }} />
@@ -1346,14 +1360,13 @@ export default function Dashboard() {
                             color: "#fff",
                             fontSize: 12,
                           }}
-                          formatter={(value) => [Number(value).toLocaleString(), undefined]}
+                          formatter={(value, name) => [Number(value).toLocaleString(), name]}
                           labelFormatter={(label) => `Year ${label}`}
                         />
                         <Legend wrapperStyle={{ fontSize: 12 }} />
                         <Bar
                           dataKey="recurringMeetings"
                           fill="#ff9500"
-                          radius={[6, 6, 0, 0]}
                           maxBarSize={48}
                           stackId="meetings"
                           name="Recurring"
@@ -1398,14 +1411,13 @@ export default function Dashboard() {
                             color: "#fff",
                             fontSize: 12,
                           }}
-                          formatter={(value) => [`${Number(value).toLocaleString()}h`, undefined]}
+                          formatter={(value, name) => [`${Number(value).toLocaleString()}h`, name]}
                           labelFormatter={(label) => `Year ${label}`}
                         />
                         <Legend wrapperStyle={{ fontSize: 12 }} />
                         <Bar
                           dataKey="recurringHours"
                           fill="#ff9500"
-                          radius={[6, 6, 0, 0]}
                           maxBarSize={48}
                           stackId="hours"
                           name="Recurring"
@@ -1440,7 +1452,7 @@ export default function Dashboard() {
                             <th className="text-right px-5 py-2.5 text-[11px] text-[#86868b] font-semibold uppercase tracking-wider">One-Off</th>
                             <th className="text-right px-5 py-2.5 text-[11px] text-[#86868b] font-semibold uppercase tracking-wider">Total Mtgs</th>
                             <th className="text-right px-5 py-2.5 text-[11px] text-[#86868b] font-semibold uppercase tracking-wider">Hours</th>
-                            <th className="text-right px-5 py-2.5 text-[11px] text-[#86868b] font-semibold uppercase tracking-wider">Change</th>
+                            <th className="text-right px-5 py-2.5 text-[11px] text-[#86868b] font-semibold uppercase tracking-wider">Email YoY</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1452,7 +1464,12 @@ export default function Dashboard() {
                                 : null;
                             return (
                               <tr key={y.year} className="border-b border-[#f5f5f5] last:border-0">
-                                <td className="px-5 py-3 font-semibold">{y.year}</td>
+                                <td className="px-5 py-3 font-semibold">
+                                  {y.year}
+                                  {y.year === currentYear && (
+                                    <span className="text-[10px] text-[#86868b] font-normal ml-1">YTD</span>
+                                  )}
+                                </td>
                                 <td className="px-5 py-3 text-right tabular-nums">{y.received.toLocaleString()}</td>
                                 <td className="px-5 py-3 text-right tabular-nums">{y.sent.toLocaleString()}</td>
                                 <td className="px-5 py-3 text-right tabular-nums">{y.recurringMeetings.toLocaleString()}</td>
@@ -1503,6 +1520,15 @@ export default function Dashboard() {
                             {peakMeetingYear?.meetings.toLocaleString()}
                           </p>
                         </div>
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-sm font-medium">Most Meeting Hours</p>
+                            <p className="text-xs text-[#86868b]">{peakHoursYear?.year}</p>
+                          </div>
+                          <p className="text-lg font-bold text-[#5856d6]">
+                            {peakHoursYear?.meetingHours.toLocaleString()}h
+                          </p>
+                        </div>
                       </div>
                     </div>
 
@@ -1512,13 +1538,19 @@ export default function Dashboard() {
                         <div className="flex items-center justify-between">
                           <p className="text-sm font-medium">Emails per Year</p>
                           <p className="text-lg font-bold">
-                            {Math.round(history.totalEmails / Math.max(yearly.length, 1)).toLocaleString()}
+                            {Math.round(fullYearEmails / fullYearCount).toLocaleString()}
                           </p>
                         </div>
                         <div className="flex items-center justify-between">
                           <p className="text-sm font-medium">Meeting Hours per Year</p>
                           <p className="text-lg font-bold">
-                            {Math.round(history.totalMeetingHours / Math.max(yearly.length, 1)).toLocaleString()}h
+                            {Math.round(fullYearHours / fullYearCount).toLocaleString()}h
+                          </p>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <p className="text-sm font-medium">Recurring Meeting %</p>
+                          <p className="text-lg font-bold text-[#ff9500]">
+                            {recurringPct}%
                           </p>
                         </div>
                       </div>

@@ -1,4 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createHash } from "crypto";
+
+function hashToken(password: string): string {
+  return createHash("sha256").update(password).digest("hex");
+}
 
 export async function POST(request: NextRequest) {
   const { password } = await request.json();
@@ -9,7 +14,7 @@ export async function POST(request: NextRequest) {
   }
 
   const response = NextResponse.json({ ok: true });
-  response.cookies.set("dash_auth", expected, {
+  response.cookies.set("dash_auth", hashToken(expected), {
     httpOnly: true,
     secure: true,
     sameSite: "strict",
