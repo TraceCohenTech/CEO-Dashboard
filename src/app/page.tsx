@@ -125,6 +125,10 @@ interface HistoryYear {
   sent: number;
   meetings: number;
   meetingHours: number;
+  recurringMeetings: number;
+  recurringHours: number;
+  oneOffMeetings: number;
+  oneOffHours: number;
 }
 
 interface HistoryData {
@@ -1315,13 +1319,13 @@ export default function Dashboard() {
                     </ResponsiveContainer>
                   </div>
 
-                  {/* Meetings & Hours by Year */}
+                  {/* Meetings by Year: Recurring vs One-Off */}
                   <div className="bg-white rounded-2xl p-5 shadow-sm">
                     <p className="text-[13px] text-[#86868b] font-medium mb-4">
-                      Meetings & Hours by Year
+                      Meetings by Year — Recurring vs One-Off
                     </p>
                     <ResponsiveContainer width="100%" height={300}>
-                      <ComposedChart data={yearly}>
+                      <BarChart data={yearly} barGap={4}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                         <XAxis
                           dataKey="year"
@@ -1330,14 +1334,57 @@ export default function Dashboard() {
                           tickLine={false}
                         />
                         <YAxis
-                          yAxisId="left"
                           tick={{ fontSize: 12, fill: "#86868b" }}
                           axisLine={false}
                           tickLine={false}
                         />
+                        <Tooltip
+                          contentStyle={{
+                            background: "#1d1d1f",
+                            border: "none",
+                            borderRadius: 10,
+                            color: "#fff",
+                            fontSize: 12,
+                          }}
+                          formatter={(value) => [Number(value).toLocaleString(), undefined]}
+                          labelFormatter={(label) => `Year ${label}`}
+                        />
+                        <Legend wrapperStyle={{ fontSize: 12 }} />
+                        <Bar
+                          dataKey="recurringMeetings"
+                          fill="#ff9500"
+                          radius={[6, 6, 0, 0]}
+                          maxBarSize={48}
+                          stackId="meetings"
+                          name="Recurring"
+                        />
+                        <Bar
+                          dataKey="oneOffMeetings"
+                          fill="#5856d6"
+                          radius={[6, 6, 0, 0]}
+                          maxBarSize={48}
+                          stackId="meetings"
+                          name="One-Off"
+                        />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+
+                  {/* Meeting Hours: Recurring vs One-Off */}
+                  <div className="bg-white rounded-2xl p-5 shadow-sm">
+                    <p className="text-[13px] text-[#86868b] font-medium mb-4">
+                      Meeting Hours by Year — Recurring vs One-Off
+                    </p>
+                    <ResponsiveContainer width="100%" height={300}>
+                      <BarChart data={yearly} barGap={4}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                        <XAxis
+                          dataKey="year"
+                          tick={{ fontSize: 13, fill: "#1d1d1f", fontWeight: 600 }}
+                          axisLine={false}
+                          tickLine={false}
+                        />
                         <YAxis
-                          yAxisId="right"
-                          orientation="right"
                           tick={{ fontSize: 12, fill: "#86868b" }}
                           axisLine={false}
                           tickLine={false}
@@ -1351,31 +1398,27 @@ export default function Dashboard() {
                             color: "#fff",
                             fontSize: 12,
                           }}
-                          formatter={(value, name) => [
-                            name === "Hours" ? `${Number(value).toLocaleString()}h` : Number(value).toLocaleString(),
-                            name,
-                          ]}
+                          formatter={(value) => [`${Number(value).toLocaleString()}h`, undefined]}
                           labelFormatter={(label) => `Year ${label}`}
                         />
                         <Legend wrapperStyle={{ fontSize: 12 }} />
                         <Bar
-                          yAxisId="left"
-                          dataKey="meetings"
+                          dataKey="recurringHours"
                           fill="#ff9500"
                           radius={[6, 6, 0, 0]}
                           maxBarSize={48}
-                          name="Meetings"
+                          stackId="hours"
+                          name="Recurring"
                         />
-                        <Line
-                          yAxisId="right"
-                          type="monotone"
-                          dataKey="meetingHours"
-                          stroke="#ff3b30"
-                          strokeWidth={3}
-                          dot={{ fill: "#ff3b30", r: 5 }}
-                          name="Hours"
+                        <Bar
+                          dataKey="oneOffHours"
+                          fill="#5856d6"
+                          radius={[6, 6, 0, 0]}
+                          maxBarSize={48}
+                          stackId="hours"
+                          name="One-Off"
                         />
-                      </ComposedChart>
+                      </BarChart>
                     </ResponsiveContainer>
                   </div>
 
@@ -1393,7 +1436,9 @@ export default function Dashboard() {
                             <th className="text-left px-5 py-2.5 text-[11px] text-[#86868b] font-semibold uppercase tracking-wider">Year</th>
                             <th className="text-right px-5 py-2.5 text-[11px] text-[#86868b] font-semibold uppercase tracking-wider">Received</th>
                             <th className="text-right px-5 py-2.5 text-[11px] text-[#86868b] font-semibold uppercase tracking-wider">Sent</th>
-                            <th className="text-right px-5 py-2.5 text-[11px] text-[#86868b] font-semibold uppercase tracking-wider">Meetings</th>
+                            <th className="text-right px-5 py-2.5 text-[11px] text-[#86868b] font-semibold uppercase tracking-wider">Recurring</th>
+                            <th className="text-right px-5 py-2.5 text-[11px] text-[#86868b] font-semibold uppercase tracking-wider">One-Off</th>
+                            <th className="text-right px-5 py-2.5 text-[11px] text-[#86868b] font-semibold uppercase tracking-wider">Total Mtgs</th>
                             <th className="text-right px-5 py-2.5 text-[11px] text-[#86868b] font-semibold uppercase tracking-wider">Hours</th>
                             <th className="text-right px-5 py-2.5 text-[11px] text-[#86868b] font-semibold uppercase tracking-wider">Change</th>
                           </tr>
@@ -1410,6 +1455,8 @@ export default function Dashboard() {
                                 <td className="px-5 py-3 font-semibold">{y.year}</td>
                                 <td className="px-5 py-3 text-right tabular-nums">{y.received.toLocaleString()}</td>
                                 <td className="px-5 py-3 text-right tabular-nums">{y.sent.toLocaleString()}</td>
+                                <td className="px-5 py-3 text-right tabular-nums">{y.recurringMeetings.toLocaleString()}</td>
+                                <td className="px-5 py-3 text-right tabular-nums">{y.oneOffMeetings.toLocaleString()}</td>
                                 <td className="px-5 py-3 text-right tabular-nums">{y.meetings.toLocaleString()}</td>
                                 <td className="px-5 py-3 text-right tabular-nums">{y.meetingHours.toLocaleString()}h</td>
                                 <td className="px-5 py-3 text-right">

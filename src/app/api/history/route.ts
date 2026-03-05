@@ -4,8 +4,9 @@ import { getCalendar, getGmail } from "@/lib/google";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-let cache: { data: unknown; timestamp: number } | null = null;
+let cache: { data: unknown; timestamp: number; version: number } | null = null;
 const CACHE_TTL = 1000 * 60 * 60 * 24; // 24 hours
+const CACHE_VERSION = 2; // Bump to invalidate cache
 
 const START_YEAR = 2020;
 
@@ -53,6 +54,8 @@ async function getYearEmailCounts(
   return { received, sent };
 }
 
+const MAX_MEETING_MINUTES = 240; // Cap single meeting at 4 hours
+
 async function getYearCalendarStats(
   calendar: ReturnType<typeof getCalendar>,
   year: number
@@ -60,8 +63,10 @@ async function getYearCalendarStats(
   const timeMin = `${year}-01-01T00:00:00Z`;
   const timeMax = `${year + 1}-01-01T00:00:00Z`;
 
-  let totalEvents = 0;
-  let totalMinutes = 0;
+  let recurringCount = 0;
+  let recurringMinutes = 0;
+  let oneOffCount = 0;
+  let oneOffMinutes = 0;
   let pageToken: string | undefined;
 
   do {
@@ -72,31 +77,48 @@ async function getYearCalendarStats(
       singleEvents: true,
       maxResults: 2500,
       pageToken,
-      fields: "nextPageToken,items(start,end,status)",
+      fields: "nextPageToken,items(start,end,status,recurringEventId)",
     });
 
     for (const event of res.data.items || []) {
       if (event.status === "cancelled") continue;
-      totalEvents++;
-      if (event.start?.dateTime && event.end?.dateTime) {
-        const mins =
-          (new Date(event.end.dateTime).getTime() -
-            new Date(event.start.dateTime).getTime()) /
-          60000;
-        totalMinutes += mins;
+      // Skip all-day / multi-day events (no dateTime = date-only)
+      if (!event.start?.dateTime || !event.end?.dateTime) continue;
+
+      const mins = Math.min(
+        (new Date(event.end.dateTime).getTime() -
+          new Date(event.start.dateTime).getTime()) /
+          60000,
+        MAX_MEETING_MINUTES
+      );
+
+      if (event.recurringEventId) {
+        recurringCount++;
+        recurringMinutes += mins;
+      } else {
+        oneOffCount++;
+        oneOffMinutes += mins;
       }
     }
     pageToken = res.data.nextPageToken || undefined;
   } while (pageToken);
 
   return {
-    meetings: totalEvents,
-    hours: Math.round((totalMinutes / 60) * 10) / 10,
+    meetings: recurringCount + oneOffCount,
+    hours: Math.round(((recurringMinutes + oneOffMinutes) / 60) * 10) / 10,
+    recurring: {
+      count: recurringCount,
+      hours: Math.round((recurringMinutes / 60) * 10) / 10,
+    },
+    oneOff: {
+      count: oneOffCount,
+      hours: Math.round((oneOffMinutes / 60) * 10) / 10,
+    },
   };
 }
 
 export async function GET() {
-  if (cache && Date.now() - cache.timestamp < CACHE_TTL) {
+  if (cache && cache.version === CACHE_VERSION && Date.now() - cache.timestamp < CACHE_TTL) {
     return NextResponse.json(cache.data);
   }
 
@@ -105,13 +127,16 @@ export async function GET() {
     const calendar = getCalendar();
     const allYears = years();
 
-    // Process 2 years at a time to stay within limits
     const yearly: {
       year: number;
       received: number;
       sent: number;
       meetings: number;
       meetingHours: number;
+      recurringMeetings: number;
+      recurringHours: number;
+      oneOffMeetings: number;
+      oneOffHours: number;
     }[] = [];
 
     for (let i = 0; i < allYears.length; i += 2) {
@@ -128,6 +153,10 @@ export async function GET() {
             sent: email.sent,
             meetings: cal.meetings,
             meetingHours: cal.hours,
+            recurringMeetings: cal.recurring.count,
+            recurringHours: cal.recurring.hours,
+            oneOffMeetings: cal.oneOff.count,
+            oneOffHours: cal.oneOff.hours,
           };
         })
       );
@@ -149,7 +178,7 @@ export async function GET() {
       generatedAt: new Date().toISOString(),
     };
 
-    cache = { data: responseData, timestamp: Date.now() };
+    cache = { data: responseData, timestamp: Date.now(), version: CACHE_VERSION };
     return NextResponse.json(responseData);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Unknown error";
