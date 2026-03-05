@@ -236,6 +236,36 @@ async function getSentTodayCount() {
   return countMessages(gmail, `in:sent after:${dateStr}`);
 }
 
+async function getRecentSent() {
+  const gmail = getGmail();
+  const list = await gmail.users.messages.list({
+    userId: "me",
+    maxResults: 8,
+    q: "in:sent",
+    fields: "messages(id)",
+  });
+  const messages = list.data.messages || [];
+  const details = await Promise.all(
+    messages.slice(0, 8).map(async (msg) => {
+      const detail = await gmail.users.messages.get({
+        userId: "me",
+        id: msg.id!,
+        format: "metadata",
+        metadataHeaders: ["To", "Subject", "Date"],
+      });
+      const headers = detail.data.payload?.headers || [];
+      return {
+        id: msg.id,
+        to: headers.find((h) => h.name === "To")?.value || "",
+        subject: headers.find((h) => h.name === "Subject")?.value || "",
+        date: headers.find((h) => h.name === "Date")?.value || "",
+        snippet: detail.data.snippet || "",
+      };
+    })
+  );
+  return details;
+}
+
 async function getRecentFiles() {
   const drive = getDrive();
   const res = await drive.files.list({
@@ -402,6 +432,7 @@ export async function GET() {
       emailCategories,
       topContacts,
       lastWeek,
+      recentSent,
     ] = await Promise.all([
       getTodayEvents(),
       getWeekEvents(),
@@ -416,6 +447,7 @@ export async function GET() {
       getEmailCategories(),
       getTopContacts(),
       getLastWeekStats(),
+      getRecentSent(),
     ]);
 
     // Calculate meeting hours this week
@@ -524,6 +556,7 @@ export async function GET() {
       topContacts,
       lastWeek,
       busiestHours,
+      recentSent,
       generatedAt: new Date().toISOString(),
     });
   } catch (error: unknown) {

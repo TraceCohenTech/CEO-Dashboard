@@ -124,6 +124,13 @@ interface DashboardData {
   topContacts: TopContact[];
   lastWeek: { received: number; meetings: number; meetingHours: number };
   busiestHours: { hour: number; label: string; count: number }[];
+  recentSent: {
+    id: string;
+    to: string;
+    subject: string;
+    date: string;
+    snippet: string;
+  }[];
   generatedAt: string;
 }
 
@@ -634,7 +641,7 @@ export default function Dashboard() {
                   {getGreeting()}, {firstName}
                 </h1>
                 <p className="text-[13px] text-[#86868b]">
-                  {new Date().toLocaleDateString("en-US", {
+                  Monitoring The (Work) Situation \u00b7 {new Date().toLocaleDateString("en-US", {
                     weekday: "long",
                     month: "long",
                     day: "numeric",
@@ -726,20 +733,16 @@ export default function Dashboard() {
                 />
               </div>
 
-              {/* Next Meeting + Today's Agenda */}
+              {/* Next Meeting + Today's Schedule */}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
                 <div>
                   {data.today.events.length > 0 ? (
                     <NextMeetingCard event={data.today.events[0]} />
                   ) : (
                     <div className="bg-gradient-to-br from-emerald-600 to-emerald-700 rounded-2xl p-5 text-white shadow-lg card-hover">
-                      <p className="text-[13px] text-white/50 font-medium">
-                        Today
-                      </p>
+                      <p className="text-[13px] text-white/50 font-medium">Today</p>
                       <p className="text-lg font-semibold mt-2">No more meetings</p>
-                      <p className="text-sm text-white/70 mt-1">
-                        You have the rest of the day free
-                      </p>
+                      <p className="text-sm text-white/70 mt-1">You have the rest of the day free</p>
                     </div>
                   )}
                 </div>
@@ -752,137 +755,156 @@ export default function Dashboard() {
                       {data.today.events.map((event, i) => (
                         <div key={i} className="flex items-center gap-4">
                           <span className="text-sm text-[#86868b] w-20 shrink-0 text-right font-mono">
-                            {event.start?.dateTime
-                              ? formatTime(event.start.dateTime)
-                              : "All day"}
+                            {event.start?.dateTime ? formatTime(event.start.dateTime) : "All day"}
                           </span>
                           <div className="w-2 h-2 rounded-full bg-[#0071e3] shrink-0" />
-                          <div className="flex-1 min-w-0 flex items-center justify-between gap-2">
-                            <p className="text-sm font-medium truncate">
-                              {event.summary || "Untitled"}
-                            </p>
-                            {event.hangoutLink && (
-                              <a
-                                href={event.hangoutLink}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-[#0071e3] text-xs font-medium shrink-0 hover:underline"
-                              >
-                                Join
-                              </a>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-sm font-medium truncate">{event.summary || "Untitled"}</p>
+                              {event.hangoutLink && (
+                                <a href={event.hangoutLink} target="_blank" rel="noopener noreferrer"
+                                  className="text-[#0071e3] text-xs font-medium shrink-0 hover:underline">Join</a>
+                              )}
+                            </div>
+                            {event.attendees && event.attendees.length > 0 && (
+                              <div className="flex items-center gap-1 mt-1">
+                                {event.attendees.slice(0, 4).map((a, j) => (
+                                  <div key={j} className="w-5 h-5 rounded-full bg-[#e5e5e5] flex items-center justify-center text-[9px] font-bold text-[#86868b] -ml-1 first:ml-0 ring-1 ring-white"
+                                    title={a.displayName || a.email}>
+                                    {(a.displayName || a.email).charAt(0).toUpperCase()}
+                                  </div>
+                                ))}
+                                {event.attendees.length > 4 && (
+                                  <span className="text-[10px] text-[#86868b] ml-1">+{event.attendees.length - 4}</span>
+                                )}
+                              </div>
                             )}
                           </div>
                         </div>
                       ))}
                     </div>
                   ) : (
-                    <p className="text-[#86868b] text-sm py-4 text-center">
-                      No events scheduled today
-                    </p>
+                    <p className="text-[#86868b] text-sm py-4 text-center">No events scheduled today</p>
                   )}
                 </div>
               </div>
 
-              {/* Charts Row */}
+              {/* Needs Attention + Overdue Tasks */}
+              {(() => {
+                const overdueTasks = data.tasks.lists
+                  .flatMap((l) => l.open)
+                  .filter((t) => t.due && new Date(t.due) < new Date());
+                const importantUnread = data.email.recent.filter((e) => e.isUnread);
+                const hasAttention = overdueTasks.length > 0 || importantUnread.length > 0;
+
+                if (!hasAttention) return null;
+                return (
+                  <div className="bg-gradient-to-r from-orange-50 to-red-50 border border-orange-200/50 rounded-2xl p-5 shadow-sm">
+                    <p className="text-[13px] font-semibold text-orange-800 mb-3">Needs Your Attention</p>
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                      {overdueTasks.length > 0 && (
+                        <div>
+                          <p className="text-[11px] uppercase tracking-wider text-orange-600 font-semibold mb-2">Overdue Tasks</p>
+                          <div className="space-y-2">
+                            {overdueTasks.slice(0, 3).map((task) => (
+                              <div key={task.id} className="flex items-center gap-2">
+                                <div className="w-3 h-3 rounded-full border-2 border-orange-400 shrink-0" />
+                                <p className="text-sm font-medium truncate">{task.title}</p>
+                                <span className="text-[10px] text-orange-500 font-medium shrink-0">
+                                  {new Date(task.due!).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {importantUnread.length > 0 && (
+                        <div>
+                          <p className="text-[11px] uppercase tracking-wider text-red-600 font-semibold mb-2">Unread from People</p>
+                          <div className="space-y-2">
+                            {importantUnread.slice(0, 3).map((email) => (
+                              <div key={email.id} className="flex items-center gap-2">
+                                <div className="w-3 h-3 rounded-full bg-[#0071e3] shrink-0" />
+                                <p className="text-sm font-medium truncate">{parseFromName(email.from)}</p>
+                                <p className="text-[11px] text-[#86868b] truncate shrink-0">{formatRelative(email.date)}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Follow Up + Week Ahead */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                {/* Focus Time vs Meeting Load */}
-                <div className="bg-white rounded-2xl p-5 shadow-sm card-hover">
-                  <p className="text-[13px] text-[#86868b] font-medium mb-4">
-                    Focus vs Meeting Time
-                  </p>
-                  <ResponsiveContainer width="100%" height={180}>
-                    <BarChart data={data.calendar.weeklyData}>
-                      <XAxis
-                        dataKey="day"
-                        tick={{ fontSize: 12, fill: "#86868b" }}
-                        axisLine={false}
-                        tickLine={false}
-                      />
-                      <YAxis hide />
-                      <Tooltip contentStyle={tooltipStyle}
-                        formatter={(value, name) => [`${value}h`, name]}
-                      />
-                      <Legend wrapperStyle={{ fontSize: 11 }} />
-                      <Bar
-                        dataKey="focusHours"
-                        fill="#34c759"
-                        radius={[6, 6, 0, 0]}
-                        maxBarSize={24}
-                        stackId="time"
-                        name="Focus"
-                      />
-                      <Bar
-                        dataKey="hours"
-                        fill="#0071e3"
-                        radius={[6, 6, 0, 0]}
-                        maxBarSize={24}
-                        stackId="time"
-                        name="Meetings"
-                      />
-                    </BarChart>
-                  </ResponsiveContainer>
+                {/* Follow Up */}
+                <div className="bg-white rounded-2xl shadow-sm overflow-hidden card-hover">
+                  <div className="px-5 pt-5 pb-3">
+                    <p className="text-[13px] text-[#86868b] font-medium">Follow Up</p>
+                    <p className="text-[11px] text-[#86868b]">Recently sent — may need a response</p>
+                  </div>
+                  <div className="divide-y divide-[#f5f5f5]">
+                    {data.recentSent.slice(0, 5).map((sent) => (
+                      <div key={sent.id} className="px-5 py-3 hover:bg-[#f9f9f9] transition-colors">
+                        <div className="flex items-center gap-2">
+                          <div className="w-5 h-5 rounded-full bg-gradient-to-br from-emerald-400 to-emerald-600 flex items-center justify-center shrink-0">
+                            <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 19.5l15-15m0 0H8.25m11.25 0v11.25" />
+                            </svg>
+                          </div>
+                          <p className="text-sm font-medium truncate flex-1">
+                            {parseFromName(sent.to)}
+                          </p>
+                          <span className="text-[11px] text-[#86868b] shrink-0">{formatRelative(sent.date)}</span>
+                        </div>
+                        <p className="text-[12px] text-[#1d1d1f]/60 truncate mt-0.5 ml-7">
+                          {sent.subject || "(no subject)"}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
                 </div>
 
-                {/* Email Volume */}
+                {/* Week at a Glance */}
                 <div className="bg-white rounded-2xl p-5 shadow-sm card-hover">
-                  <p className="text-[13px] text-[#86868b] font-medium mb-4">
-                    Email Volume (7 Days)
-                  </p>
-                  <ResponsiveContainer width="100%" height={180}>
-                    <AreaChart data={data.email.dailyStats}>
-                      <defs>
-                        <linearGradient id="colorReceived" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#0071e3" stopOpacity={0.15} />
-                          <stop offset="95%" stopColor="#0071e3" stopOpacity={0} />
-                        </linearGradient>
-                        <linearGradient id="colorSent" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#34c759" stopOpacity={0.15} />
-                          <stop offset="95%" stopColor="#34c759" stopOpacity={0} />
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                      <XAxis
-                        dataKey="dayLabel"
-                        tick={{ fontSize: 12, fill: "#86868b" }}
-                        axisLine={false}
-                        tickLine={false}
-                      />
-                      <YAxis hide />
-                      <Tooltip contentStyle={tooltipStyle} />
-                      <Area
-                        type="monotone"
-                        dataKey="received"
-                        stroke="#0071e3"
-                        strokeWidth={2}
-                        fillOpacity={1}
-                        fill="url(#colorReceived)"
-                        name="Received"
-                      />
-                      <Area
-                        type="monotone"
-                        dataKey="sent"
-                        stroke="#34c759"
-                        strokeWidth={2}
-                        fillOpacity={1}
-                        fill="url(#colorSent)"
-                        name="Sent"
-                      />
-                    </AreaChart>
-                  </ResponsiveContainer>
+                  <p className="text-[13px] text-[#86868b] font-medium mb-4">Week at a Glance</p>
+                  <div className="space-y-3">
+                    {data.calendar.weeklyData.map((day) => {
+                      const isToday = day.day === new Date().toLocaleDateString("en-US", { weekday: "short" });
+                      const maxMeetings = Math.max(...data.calendar.weeklyData.map((d) => d.meetings), 1);
+                      return (
+                        <div key={day.day} className={`flex items-center gap-3 ${isToday ? "bg-[#f0f7ff] -mx-2 px-2 py-1.5 rounded-lg" : ""}`}>
+                          <span className={`text-sm w-10 shrink-0 font-mono ${isToday ? "font-bold text-[#0071e3]" : "text-[#86868b]"}`}>
+                            {day.day}
+                          </span>
+                          <div className="flex-1 h-5 bg-[#f0f0f0] rounded-full overflow-hidden">
+                            <motion.div
+                              className={`h-full rounded-full ${isToday ? "bg-[#0071e3]" : "bg-[#1d1d1f]/20"}`}
+                              initial={{ width: 0 }}
+                              animate={{ width: `${(day.meetings / maxMeetings) * 100}%` }}
+                              transition={{ duration: 0.6 }}
+                            />
+                          </div>
+                          <span className={`text-xs tabular-nums w-14 text-right ${isToday ? "font-semibold" : "text-[#86868b]"}`}>
+                            {day.meetings} mtg{day.meetings !== 1 ? "s" : ""}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
 
-              {/* Top Contacts + Busiest Hours */}
+              {/* Top Contacts + Email Volume */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                {/* Top Contacts */}
                 <div className="bg-white rounded-2xl shadow-sm overflow-hidden card-hover">
                   <div className="px-5 pt-5 pb-3">
-                    <p className="text-[13px] text-[#86868b] font-medium">
-                      Top Contacts
-                    </p>
+                    <p className="text-[13px] text-[#86868b] font-medium">Top Contacts</p>
                   </div>
                   <div className="divide-y divide-[#f5f5f5]">
-                    {data.topContacts.slice(0, 6).map((contact, i) => {
+                    {data.topContacts.slice(0, 5).map((contact, i) => {
                       const maxCount = data.topContacts[0]?.count || 1;
                       return (
                         <div key={contact.email} className="px-5 py-3 flex items-center gap-3">
@@ -900,47 +922,34 @@ export default function Dashboard() {
                               />
                             </div>
                           </div>
-                          <span className="text-xs text-[#86868b] font-medium tabular-nums shrink-0">
-                            {contact.count}
-                          </span>
+                          <span className="text-xs text-[#86868b] font-medium tabular-nums shrink-0">{contact.count}</span>
                         </div>
                       );
                     })}
                   </div>
                 </div>
 
-                {/* Busiest Hours */}
                 <div className="bg-white rounded-2xl p-5 shadow-sm card-hover">
-                  <p className="text-[13px] text-[#86868b] font-medium mb-4">
-                    Busiest Hours This Week
-                  </p>
+                  <p className="text-[13px] text-[#86868b] font-medium mb-4">Email Volume (7 Days)</p>
                   <ResponsiveContainer width="100%" height={180}>
-                    <BarChart data={data.busiestHours}>
-                      <XAxis
-                        dataKey="label"
-                        tick={{ fontSize: 11, fill: "#86868b" }}
-                        axisLine={false}
-                        tickLine={false}
-                      />
+                    <AreaChart data={data.email.dailyStats}>
+                      <defs>
+                        <linearGradient id="colorReceived" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#0071e3" stopOpacity={0.15} />
+                          <stop offset="95%" stopColor="#0071e3" stopOpacity={0} />
+                        </linearGradient>
+                        <linearGradient id="colorSent" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#34c759" stopOpacity={0.15} />
+                          <stop offset="95%" stopColor="#34c759" stopOpacity={0} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                      <XAxis dataKey="dayLabel" tick={{ fontSize: 12, fill: "#86868b" }} axisLine={false} tickLine={false} />
                       <YAxis hide />
-                      <Tooltip contentStyle={tooltipStyle}
-                        formatter={(value) => [value, "Meetings"]}
-                        labelFormatter={(l) => `${l}`}
-                      />
-                      <Bar
-                        dataKey="count"
-                        radius={[4, 4, 0, 0]}
-                        maxBarSize={28}
-                        name="Meetings"
-                      >
-                        {data.busiestHours.map((entry, index) => {
-                          const maxC = Math.max(...data.busiestHours.map((h) => h.count), 1);
-                          const intensity = entry.count / maxC;
-                          const fill = intensity > 0.7 ? "#0071e3" : intensity > 0.3 ? "#5ac8fa" : "#e8f4fd";
-                          return <Cell key={index} fill={fill} />;
-                        })}
-                      </Bar>
-                    </BarChart>
+                      <Tooltip contentStyle={tooltipStyle} />
+                      <Area type="monotone" dataKey="received" stroke="#0071e3" strokeWidth={2} fillOpacity={1} fill="url(#colorReceived)" name="Received" />
+                      <Area type="monotone" dataKey="sent" stroke="#34c759" strokeWidth={2} fillOpacity={1} fill="url(#colorSent)" name="Sent" />
+                    </AreaChart>
                   </ResponsiveContainer>
                 </div>
               </div>
@@ -949,37 +958,20 @@ export default function Dashboard() {
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <div className="bg-white rounded-2xl shadow-sm overflow-hidden card-hover">
                   <div className="px-5 pt-5 pb-3 flex items-center justify-between">
-                    <p className="text-[13px] text-[#86868b] font-medium">
-                      Recent Emails
-                    </p>
-                    <button
-                      onClick={() => setTab("email")}
-                      className="text-[#0071e3] text-xs font-medium"
-                    >
-                      View All
-                    </button>
+                    <p className="text-[13px] text-[#86868b] font-medium">Recent Emails</p>
+                    <button onClick={() => setTab("email")} className="text-[#0071e3] text-xs font-medium">View All</button>
                   </div>
                   <div className="divide-y divide-[#f5f5f5]">
                     {data.email.recent.slice(0, 5).map((email) => (
                       <div key={email.id} className="px-5 py-3 hover:bg-[#f9f9f9] transition-colors">
                         <div className="flex items-center gap-2">
-                          {email.isUnread && (
-                            <div className="w-1.5 h-1.5 rounded-full bg-[#0071e3] shrink-0" />
-                          )}
-                          <p
-                            className={`text-sm truncate flex-1 ${
-                              email.isUnread ? "font-semibold" : "text-[#1d1d1f]/80"
-                            }`}
-                          >
+                          {email.isUnread && <div className="w-1.5 h-1.5 rounded-full bg-[#0071e3] shrink-0" />}
+                          <p className={`text-sm truncate flex-1 ${email.isUnread ? "font-semibold" : "text-[#1d1d1f]/80"}`}>
                             {parseFromName(email.from)}
                           </p>
-                          <span className="text-[11px] text-[#86868b] shrink-0">
-                            {formatRelative(email.date)}
-                          </span>
+                          <span className="text-[11px] text-[#86868b] shrink-0">{formatRelative(email.date)}</span>
                         </div>
-                        <p className="text-[13px] text-[#1d1d1f]/60 truncate mt-0.5">
-                          {email.subject || "(no subject)"}
-                        </p>
+                        <p className="text-[13px] text-[#1d1d1f]/60 truncate mt-0.5">{email.subject || "(no subject)"}</p>
                       </div>
                     ))}
                   </div>
@@ -987,33 +979,17 @@ export default function Dashboard() {
 
                 <div className="bg-white rounded-2xl shadow-sm overflow-hidden card-hover">
                   <div className="px-5 pt-5 pb-3 flex items-center justify-between">
-                    <p className="text-[13px] text-[#86868b] font-medium">
-                      Recent Files
-                    </p>
-                    <button
-                      onClick={() => setTab("drive")}
-                      className="text-[#0071e3] text-xs font-medium"
-                    >
-                      View All
-                    </button>
+                    <p className="text-[13px] text-[#86868b] font-medium">Recent Files</p>
+                    <button onClick={() => setTab("drive")} className="text-[#0071e3] text-xs font-medium">View All</button>
                   </div>
                   <div className="divide-y divide-[#f5f5f5]">
                     {data.drive.recentFiles.slice(0, 5).map((file) => (
-                      <a
-                        key={file.id}
-                        href={file.webViewLink}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="px-5 py-3 flex items-center gap-3 hover:bg-[#f9f9f9] transition-colors block"
-                      >
+                      <a key={file.id} href={file.webViewLink} target="_blank" rel="noopener noreferrer"
+                        className="px-5 py-3 flex items-center gap-3 hover:bg-[#f9f9f9] transition-colors block">
                         <div className={`w-2 h-2 rounded-full ${mimeDot(file.mimeType)} shrink-0`} />
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium truncate">
-                            {file.name}
-                          </p>
-                          <p className="text-[11px] text-[#86868b]">
-                            {mimeLabel(file.mimeType)} \u00b7 {formatRelative(file.modifiedTime)}
-                          </p>
+                          <p className="text-sm font-medium truncate">{file.name}</p>
+                          <p className="text-[11px] text-[#86868b]">{mimeLabel(file.mimeType)} \u00b7 {formatRelative(file.modifiedTime)}</p>
                         </div>
                       </a>
                     ))}
@@ -1046,9 +1022,9 @@ export default function Dashboard() {
                   wow={hoursWow}
                 />
                 <KpiCard
-                  label="Focus Hours"
-                  value={`${Math.max(0, Math.round((45 - data.calendar.meetingHoursThisWeek) * 10) / 10)}h`}
-                  sub="of 45h work week"
+                  label="Today"
+                  value={data.today.meetingsLeft}
+                  sub="meetings remaining"
                 />
                 <KpiCard
                   label="Avg Per Day"
@@ -1057,31 +1033,20 @@ export default function Dashboard() {
                 />
               </div>
 
-              {/* Focus Time vs Meetings */}
               <div className="bg-white rounded-2xl p-5 shadow-sm card-hover">
                 <p className="text-[13px] text-[#86868b] font-medium mb-4">
-                  Focus vs Meeting Time
+                  Weekly Meeting Load
                 </p>
                 <ResponsiveContainer width="100%" height={220}>
                   <BarChart data={data.calendar.weeklyData}>
-                    <XAxis
-                      dataKey="day"
-                      tick={{ fontSize: 12, fill: "#86868b" }}
-                      axisLine={false}
-                      tickLine={false}
-                    />
-                    <YAxis
-                      tick={{ fontSize: 12, fill: "#86868b" }}
-                      axisLine={false}
-                      tickLine={false}
-                      tickFormatter={(v) => `${v}h`}
-                    />
+                    <XAxis dataKey="day" tick={{ fontSize: 12, fill: "#86868b" }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fontSize: 12, fill: "#86868b" }} axisLine={false} tickLine={false} />
                     <Tooltip contentStyle={tooltipStyle}
-                      formatter={(value, name) => [`${value}h`, name]}
+                      formatter={(value, name) => [name === "hours" ? `${value}h` : value, name === "hours" ? "Hours" : "Meetings"]}
                     />
                     <Legend wrapperStyle={{ fontSize: 12 }} />
-                    <Bar dataKey="focusHours" fill="#34c759" radius={[0, 0, 0, 0]} maxBarSize={40} name="Focus" stackId="s" />
-                    <Bar dataKey="hours" fill="#0071e3" radius={[6, 6, 0, 0]} maxBarSize={40} name="Meetings" stackId="s" />
+                    <Bar dataKey="meetings" fill="#0071e3" radius={[6, 6, 0, 0]} maxBarSize={40} name="Meetings" />
+                    <Bar dataKey="hours" fill="#34c759" radius={[6, 6, 0, 0]} maxBarSize={40} name="Hours" />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
