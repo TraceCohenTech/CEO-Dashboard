@@ -61,10 +61,29 @@ async function getUpcomingEvents() {
   return res.data.items || [];
 }
 
+async function countMessages(
+  gmail: ReturnType<typeof getGmail>,
+  query: string
+): Promise<number> {
+  let count = 0;
+  let pageToken: string | undefined;
+  do {
+    const res = await gmail.users.messages.list({
+      userId: "me",
+      q: query,
+      maxResults: 500,
+      pageToken,
+      fields: "nextPageToken,messages(id)",
+    });
+    count += (res.data.messages || []).length;
+    pageToken = res.data.nextPageToken || undefined;
+  } while (pageToken);
+  return count;
+}
+
 async function getEmailStats() {
   const gmail = getGmail();
 
-  // Get counts for the last 7 days
   const dailyCounts = await Promise.all(
     Array.from({ length: 7 }, (_, i) => {
       const date = new Date();
@@ -75,21 +94,13 @@ async function getEmailStats() {
       const nextDateStr = `${nextDate.getFullYear()}/${String(nextDate.getMonth() + 1).padStart(2, "0")}/${String(nextDate.getDate()).padStart(2, "0")}`;
 
       return Promise.all([
-        gmail.users.messages.list({
-          userId: "me",
-          q: `after:${dateStr} before:${nextDateStr}`,
-          maxResults: 1,
-        }),
-        gmail.users.messages.list({
-          userId: "me",
-          q: `in:sent after:${dateStr} before:${nextDateStr}`,
-          maxResults: 1,
-        }),
+        countMessages(gmail, `after:${dateStr} before:${nextDateStr}`),
+        countMessages(gmail, `in:sent after:${dateStr} before:${nextDateStr}`),
       ]).then(([received, sent]) => ({
         date: date.toISOString().split("T")[0],
         dayLabel: date.toLocaleDateString("en-US", { weekday: "short" }),
-        received: received.data.resultSizeEstimate || 0,
-        sent: sent.data.resultSizeEstimate || 0,
+        received,
+        sent,
       }));
     })
   );
@@ -146,12 +157,7 @@ async function getSentTodayCount() {
   const gmail = getGmail();
   const today = new Date();
   const dateStr = `${today.getFullYear()}/${String(today.getMonth() + 1).padStart(2, "0")}/${String(today.getDate()).padStart(2, "0")}`;
-  const res = await gmail.users.messages.list({
-    userId: "me",
-    q: `in:sent after:${dateStr}`,
-    maxResults: 1,
-  });
-  return res.data.resultSizeEstimate || 0;
+  return countMessages(gmail, `in:sent after:${dateStr}`);
 }
 
 async function getRecentFiles() {
