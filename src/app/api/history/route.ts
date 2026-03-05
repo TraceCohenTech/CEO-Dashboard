@@ -4,76 +4,61 @@ import { getCalendar, getGmail } from "@/lib/google";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-// In-memory cache (persists across warm invocations on Vercel)
 let cache: { data: unknown; timestamp: number } | null = null;
-const CACHE_TTL = 1000 * 60 * 60 * 12; // 12 hours
+const CACHE_TTL = 1000 * 60 * 60 * 24; // 24 hours
 
-function monthRange(startYear: number): { year: number; month: number }[] {
-  const months: { year: number; month: number }[] = [];
-  const now = new Date();
-  const endYear = now.getFullYear();
-  const endMonth = now.getMonth() + 1;
+const START_YEAR = 2020;
 
-  for (let y = startYear; y <= endYear; y++) {
-    const mStart = y === startYear ? 1 : 1;
-    const mEnd = y === endYear ? endMonth : 12;
-    for (let m = mStart; m <= mEnd; m++) {
-      months.push({ year: y, month: m });
-    }
-  }
-  return months;
+function years(): number[] {
+  const now = new Date().getFullYear();
+  const result: number[] = [];
+  for (let y = START_YEAR; y <= now; y++) result.push(y);
+  return result;
 }
 
-function dateStr(y: number, m: number, d: number) {
-  return `${y}/${String(m).padStart(2, "0")}/${String(d).padStart(2, "0")}`;
-}
-
-function isoDate(y: number, m: number, d: number) {
-  return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}T00:00:00Z`;
-}
-
-function lastDay(y: number, m: number) {
-  return new Date(y, m, 0).getDate();
-}
-
-async function getEmailCountsForMonth(
+async function countEmails(
   gmail: ReturnType<typeof getGmail>,
-  year: number,
-  month: number
-) {
-  const startDate = dateStr(year, month, 1);
-  const nextMonth = month === 12 ? 1 : month + 1;
-  const nextYear = month === 12 ? year + 1 : year;
-  const endDate = dateStr(nextYear, nextMonth, 1);
+  query: string
+): Promise<number> {
+  let count = 0;
+  let pageToken: string | undefined;
 
-  const [receivedRes, sentRes] = await Promise.all([
-    gmail.users.messages.list({
+  do {
+    const res = await gmail.users.messages.list({
       userId: "me",
-      q: `after:${startDate} before:${endDate}`,
-      maxResults: 1,
-    }),
-    gmail.users.messages.list({
-      userId: "me",
-      q: `in:sent after:${startDate} before:${endDate}`,
-      maxResults: 1,
-    }),
+      q: query,
+      maxResults: 500,
+      pageToken,
+      fields: "nextPageToken,messages(id)",
+    });
+    count += (res.data.messages || []).length;
+    pageToken = res.data.nextPageToken || undefined;
+  } while (pageToken);
+
+  return count;
+}
+
+async function getYearEmailCounts(
+  gmail: ReturnType<typeof getGmail>,
+  year: number
+) {
+  const after = `${year}/01/01`;
+  const before = `${year + 1}/01/01`;
+
+  const [received, sent] = await Promise.all([
+    countEmails(gmail, `after:${after} before:${before}`),
+    countEmails(gmail, `in:sent after:${after} before:${before}`),
   ]);
 
-  return {
-    received: receivedRes.data.resultSizeEstimate || 0,
-    sent: sentRes.data.resultSizeEstimate || 0,
-  };
+  return { received, sent };
 }
 
-async function getCalendarCountForMonth(
+async function getYearCalendarStats(
   calendar: ReturnType<typeof getCalendar>,
-  year: number,
-  month: number
+  year: number
 ) {
-  const timeMin = isoDate(year, month, 1);
-  const nextMonth = month === 12 ? 1 : month + 1;
-  const nextYear = month === 12 ? year + 1 : year;
-  const timeMax = isoDate(nextYear, nextMonth, 1);
+  const timeMin = `${year}-01-01T00:00:00Z`;
+  const timeMax = `${year + 1}-01-01T00:00:00Z`;
 
   let totalEvents = 0;
   let totalMinutes = 0;
@@ -85,14 +70,12 @@ async function getCalendarCountForMonth(
       timeMin,
       timeMax,
       singleEvents: true,
-      maxResults: 250,
+      maxResults: 2500,
       pageToken,
-      fields:
-        "nextPageToken,items(start,end,status,attendees)",
+      fields: "nextPageToken,items(start,end,status)",
     });
 
-    const items = res.data.items || [];
-    for (const event of items) {
+    for (const event of res.data.items || []) {
       if (event.status === "cancelled") continue;
       totalEvents++;
       if (event.start?.dateTime && event.end?.dateTime) {
@@ -113,7 +96,6 @@ async function getCalendarCountForMonth(
 }
 
 export async function GET() {
-  // Return cache if fresh
   if (cache && Date.now() - cache.timestamp < CACHE_TTL) {
     return NextResponse.json(cache.data);
   }
@@ -121,89 +103,49 @@ export async function GET() {
   try {
     const gmail = getGmail();
     const calendar = getCalendar();
-    const months = monthRange(2020);
+    const allYears = years();
 
-    // Process in batches of 6 to avoid rate limits
-    const results: {
+    // Process 2 years at a time to stay within limits
+    const yearly: {
       year: number;
-      month: number;
-      label: string;
       received: number;
       sent: number;
       meetings: number;
       meetingHours: number;
     }[] = [];
 
-    const batchSize = 6;
-    for (let i = 0; i < months.length; i += batchSize) {
-      const batch = months.slice(i, i + batchSize);
-      const batchResults = await Promise.all(
-        batch.map(async ({ year, month }) => {
-          const [emailCounts, calCounts] = await Promise.all([
-            getEmailCountsForMonth(gmail, year, month),
-            getCalendarCountForMonth(calendar, year, month),
+    for (let i = 0; i < allYears.length; i += 2) {
+      const batch = allYears.slice(i, i + 2);
+      const results = await Promise.all(
+        batch.map(async (year) => {
+          const [email, cal] = await Promise.all([
+            getYearEmailCounts(gmail, year),
+            getYearCalendarStats(calendar, year),
           ]);
-          const monthName = new Date(year, month - 1).toLocaleDateString(
-            "en-US",
-            { month: "short" }
-          );
           return {
             year,
-            month,
-            label: `${monthName} ${year}`,
-            received: emailCounts.received,
-            sent: emailCounts.sent,
-            meetings: calCounts.meetings,
-            meetingHours: calCounts.hours,
+            received: email.received,
+            sent: email.sent,
+            meetings: cal.meetings,
+            meetingHours: cal.hours,
           };
         })
       );
-      results.push(...batchResults);
+      yearly.push(...results);
     }
 
-    // Aggregate by year
-    const yearlyData: Record<
-      number,
-      {
-        received: number;
-        sent: number;
-        meetings: number;
-        meetingHours: number;
-      }
-    > = {};
-    for (const r of results) {
-      if (!yearlyData[r.year]) {
-        yearlyData[r.year] = {
-          received: 0,
-          sent: 0,
-          meetings: 0,
-          meetingHours: 0,
-        };
-      }
-      yearlyData[r.year].received += r.received;
-      yearlyData[r.year].sent += r.sent;
-      yearlyData[r.year].meetings += r.meetings;
-      yearlyData[r.year].meetingHours += r.meetingHours;
-    }
+    yearly.sort((a, b) => a.year - b.year);
 
-    const yearly = Object.entries(yearlyData)
-      .map(([year, data]) => ({
-        year: parseInt(year),
-        ...data,
-        meetingHours: Math.round(data.meetingHours * 10) / 10,
-      }))
-      .sort((a, b) => a.year - b.year);
+    const totalEmails = yearly.reduce((s, y) => s + y.received + y.sent, 0);
+    const totalMeetings = yearly.reduce((s, y) => s + y.meetings, 0);
+    const totalHours =
+      Math.round(yearly.reduce((s, y) => s + y.meetingHours, 0) * 10) / 10;
 
     const responseData = {
-      monthly: results,
       yearly,
-      totalEmails: results.reduce((s, r) => s + r.received + r.sent, 0),
-      totalMeetings: results.reduce((s, r) => s + r.meetings, 0),
-      totalMeetingHours: Math.round(
-        results.reduce((s, r) => s + r.meetingHours, 0) * 10
-      ) / 10,
-      periodStart: "2020-01",
-      periodEnd: `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`,
+      totalEmails,
+      totalMeetings,
+      totalMeetingHours: totalHours,
       generatedAt: new Date().toISOString(),
     };
 

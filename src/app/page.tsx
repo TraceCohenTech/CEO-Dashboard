@@ -102,16 +102,6 @@ interface DashboardData {
   generatedAt: string;
 }
 
-interface HistoryMonth {
-  year: number;
-  month: number;
-  label: string;
-  received: number;
-  sent: number;
-  meetings: number;
-  meetingHours: number;
-}
-
 interface HistoryYear {
   year: number;
   received: number;
@@ -121,13 +111,10 @@ interface HistoryYear {
 }
 
 interface HistoryData {
-  monthly: HistoryMonth[];
   yearly: HistoryYear[];
   totalEmails: number;
   totalMeetings: number;
   totalMeetingHours: number;
-  periodStart: string;
-  periodEnd: string;
 }
 
 /* ─── Helpers ─── */
@@ -263,7 +250,6 @@ export default function Dashboard() {
   const [tab, setTab] = useState<"overview" | "calendar" | "email" | "drive" | "tasks" | "analytics">("overview");
   const [history, setHistory] = useState<HistoryData | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
-  const [historyYear, setHistoryYear] = useState<number | "all">("all");
 
   const fetchData = useCallback(() => {
     setLoading(true);
@@ -1063,215 +1049,80 @@ export default function Dashboard() {
             {historyLoading && !history && (
               <div className="bg-white rounded-2xl p-12 shadow-sm text-center">
                 <div className="w-8 h-8 border-2 border-[#0071e3] border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-                <p className="text-[#86868b] text-sm">
-                  Loading historical data from 2020...
-                </p>
-                <p className="text-[#86868b] text-xs mt-1">
-                  This may take 30-60 seconds the first time
-                </p>
+                <p className="text-[#86868b] text-sm">Loading historical data (2020 - present)...</p>
+                <p className="text-[#86868b] text-xs mt-1">This may take a moment the first time</p>
               </div>
             )}
 
             {history && (() => {
-              const filteredMonthly =
-                historyYear === "all"
-                  ? history.monthly
-                  : history.monthly.filter((m) => m.year === historyYear);
+              const { yearly } = history;
 
-              const filteredYearly = history.yearly;
+              const peakEmailYear = [...yearly].sort((a, b) => (b.received + b.sent) - (a.received + a.sent))[0];
+              const peakMeetingYear = [...yearly].sort((a, b) => b.meetings - a.meetings)[0];
 
-              const totalReceived = filteredMonthly.reduce((s, m) => s + m.received, 0);
-              const totalSent = filteredMonthly.reduce((s, m) => s + m.sent, 0);
-              const totalMeetings = filteredMonthly.reduce((s, m) => s + m.meetings, 0);
-              const totalHours = Math.round(filteredMonthly.reduce((s, m) => s + m.meetingHours, 0) * 10) / 10;
-
-              const avgMonthlyEmails = Math.round((totalReceived + totalSent) / Math.max(filteredMonthly.length, 1));
-              const avgMonthlyMeetings = Math.round(totalMeetings / Math.max(filteredMonthly.length, 1));
-
-              // Year-over-year growth
-              const yoyGrowth = filteredYearly.length >= 2
-                ? (() => {
-                    const last = filteredYearly[filteredYearly.length - 1];
-                    const prev = filteredYearly[filteredYearly.length - 2];
-                    return {
-                      emailGrowth: prev.received > 0
-                        ? Math.round(((last.received - prev.received) / prev.received) * 100)
-                        : 0,
-                      meetingGrowth: prev.meetings > 0
-                        ? Math.round(((last.meetings - prev.meetings) / prev.meetings) * 100)
-                        : 0,
-                    };
-                  })()
-                : null;
-
-              // Peak month
-              const peakEmailMonth = [...filteredMonthly].sort((a, b) => (b.received + b.sent) - (a.received + a.sent))[0];
-              const peakMeetingMonth = [...filteredMonthly].sort((a, b) => b.meetings - a.meetings)[0];
+              // YoY for latest full year vs prior
+              const fullYears = yearly.filter((y) => y.year < new Date().getFullYear());
+              const latestFull = fullYears[fullYears.length - 1];
+              const priorFull = fullYears[fullYears.length - 2];
+              const yoyEmail =
+                latestFull && priorFull && priorFull.received > 0
+                  ? Math.round(((latestFull.received - priorFull.received) / priorFull.received) * 100)
+                  : null;
 
               return (
                 <>
-                  {/* Year Filter */}
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => setHistoryYear("all")}
-                      className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
-                        historyYear === "all"
-                          ? "bg-[#1d1d1f] text-white"
-                          : "text-[#86868b] hover:bg-black/5"
-                      }`}
-                    >
-                      All Time
-                    </button>
-                    {history.yearly.map((y) => (
-                      <button
-                        key={y.year}
-                        onClick={() => setHistoryYear(y.year)}
-                        className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
-                          historyYear === y.year
-                            ? "bg-[#1d1d1f] text-white"
-                            : "text-[#86868b] hover:bg-black/5"
-                        }`}
-                      >
-                        {y.year}
-                      </button>
-                    ))}
-                  </div>
-
                   {/* KPIs */}
                   <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                     <KpiCard
                       label="Total Emails"
-                      value={(totalReceived + totalSent).toLocaleString()}
-                      sub={`${totalReceived.toLocaleString()} received · ${totalSent.toLocaleString()} sent`}
+                      value={history.totalEmails.toLocaleString()}
+                      sub="since 2020"
                     />
                     <KpiCard
                       label="Total Meetings"
-                      value={totalMeetings.toLocaleString()}
-                      sub={`${totalHours.toLocaleString()}h in meetings`}
+                      value={history.totalMeetings.toLocaleString()}
+                      sub={`${history.totalMeetingHours.toLocaleString()}h total`}
                     />
                     <KpiCard
-                      label="Avg / Month"
-                      value={avgMonthlyEmails.toLocaleString()}
-                      sub={`emails · ${avgMonthlyMeetings} meetings`}
+                      label="Avg / Year"
+                      value={Math.round(history.totalEmails / Math.max(yearly.length, 1)).toLocaleString()}
+                      sub={`emails · ${Math.round(history.totalMeetings / Math.max(yearly.length, 1)).toLocaleString()} meetings`}
                     />
-                    {yoyGrowth && historyYear === "all" ? (
+                    {yoyEmail !== null ? (
                       <KpiCard
-                        label="YoY Change"
-                        value={`${yoyGrowth.emailGrowth > 0 ? "+" : ""}${yoyGrowth.emailGrowth}%`}
-                        sub={`emails · ${yoyGrowth.meetingGrowth > 0 ? "+" : ""}${yoyGrowth.meetingGrowth}% meetings`}
-                        accent={yoyGrowth.emailGrowth > 0 ? "text-emerald-500" : "text-red-500"}
+                        label={`${latestFull.year} vs ${priorFull.year}`}
+                        value={`${yoyEmail > 0 ? "+" : ""}${yoyEmail}%`}
+                        sub="email volume change"
+                        accent={yoyEmail > 0 ? "text-emerald-500" : "text-red-500"}
                       />
                     ) : (
                       <KpiCard
-                        label="Peak Month"
-                        value={peakEmailMonth?.label || "---"}
-                        sub={`${(peakEmailMonth?.received || 0) + (peakEmailMonth?.sent || 0)} emails`}
+                        label="Peak Year"
+                        value={String(peakEmailYear?.year || "---")}
+                        sub={`${((peakEmailYear?.received || 0) + (peakEmailYear?.sent || 0)).toLocaleString()} emails`}
                       />
                     )}
                   </div>
 
-                  {/* Yearly Overview (only in All Time view) */}
-                  {historyYear === "all" && (
-                    <div className="bg-white rounded-2xl p-5 shadow-sm">
-                      <p className="text-[13px] text-[#86868b] font-medium mb-4">
-                        Yearly Overview
-                      </p>
-                      <ResponsiveContainer width="100%" height={280}>
-                        <ComposedChart data={filteredYearly}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                          <XAxis
-                            dataKey="year"
-                            tick={{ fontSize: 12, fill: "#86868b" }}
-                            axisLine={false}
-                            tickLine={false}
-                          />
-                          <YAxis
-                            yAxisId="left"
-                            tick={{ fontSize: 12, fill: "#86868b" }}
-                            axisLine={false}
-                            tickLine={false}
-                          />
-                          <YAxis
-                            yAxisId="right"
-                            orientation="right"
-                            tick={{ fontSize: 12, fill: "#86868b" }}
-                            axisLine={false}
-                            tickLine={false}
-                          />
-                          <Tooltip
-                            contentStyle={{
-                              background: "#1d1d1f",
-                              border: "none",
-                              borderRadius: 10,
-                              color: "#fff",
-                              fontSize: 12,
-                            }}
-                          />
-                          <Legend
-                            wrapperStyle={{ fontSize: 12 }}
-                          />
-                          <Bar
-                            yAxisId="left"
-                            dataKey="received"
-                            fill="#0071e3"
-                            radius={[6, 6, 0, 0]}
-                            maxBarSize={40}
-                            name="Emails Received"
-                          />
-                          <Bar
-                            yAxisId="left"
-                            dataKey="sent"
-                            fill="#5ac8fa"
-                            radius={[6, 6, 0, 0]}
-                            maxBarSize={40}
-                            name="Emails Sent"
-                          />
-                          <Line
-                            yAxisId="right"
-                            type="monotone"
-                            dataKey="meetings"
-                            stroke="#ff9500"
-                            strokeWidth={3}
-                            dot={{ fill: "#ff9500", r: 5 }}
-                            name="Meetings"
-                          />
-                        </ComposedChart>
-                      </ResponsiveContainer>
-                    </div>
-                  )}
-
-                  {/* Monthly Email Volume */}
+                  {/* Email Volume by Year */}
                   <div className="bg-white rounded-2xl p-5 shadow-sm">
                     <p className="text-[13px] text-[#86868b] font-medium mb-4">
-                      Email Volume by Month
+                      Email Volume by Year
                     </p>
                     <ResponsiveContainer width="100%" height={300}>
-                      <AreaChart data={filteredMonthly}>
-                        <defs>
-                          <linearGradient id="colorHistReceived" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#0071e3" stopOpacity={0.2} />
-                            <stop offset="95%" stopColor="#0071e3" stopOpacity={0} />
-                          </linearGradient>
-                          <linearGradient id="colorHistSent" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#34c759" stopOpacity={0.2} />
-                            <stop offset="95%" stopColor="#34c759" stopOpacity={0} />
-                          </linearGradient>
-                        </defs>
+                      <BarChart data={yearly} barGap={4}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                         <XAxis
-                          dataKey="label"
-                          tick={{ fontSize: 10, fill: "#86868b" }}
+                          dataKey="year"
+                          tick={{ fontSize: 13, fill: "#1d1d1f", fontWeight: 600 }}
                           axisLine={false}
                           tickLine={false}
-                          interval={historyYear === "all" ? 5 : 0}
-                          angle={historyYear === "all" ? -45 : 0}
-                          textAnchor={historyYear === "all" ? "end" : "middle"}
-                          height={historyYear === "all" ? 60 : 30}
                         />
                         <YAxis
                           tick={{ fontSize: 12, fill: "#86868b" }}
                           axisLine={false}
                           tickLine={false}
+                          tickFormatter={(v) => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v}
                         />
                         <Tooltip
                           contentStyle={{
@@ -1281,47 +1132,41 @@ export default function Dashboard() {
                             color: "#fff",
                             fontSize: 12,
                           }}
+                          formatter={(value) => [Number(value).toLocaleString(), undefined]}
+                          labelFormatter={(label) => `Year ${label}`}
                         />
                         <Legend wrapperStyle={{ fontSize: 12 }} />
-                        <Area
-                          type="monotone"
+                        <Bar
                           dataKey="received"
-                          stroke="#0071e3"
-                          strokeWidth={2}
-                          fillOpacity={1}
-                          fill="url(#colorHistReceived)"
+                          fill="#0071e3"
+                          radius={[6, 6, 0, 0]}
+                          maxBarSize={48}
                           name="Received"
                         />
-                        <Area
-                          type="monotone"
+                        <Bar
                           dataKey="sent"
-                          stroke="#34c759"
-                          strokeWidth={2}
-                          fillOpacity={1}
-                          fill="url(#colorHistSent)"
+                          fill="#5ac8fa"
+                          radius={[6, 6, 0, 0]}
+                          maxBarSize={48}
                           name="Sent"
                         />
-                      </AreaChart>
+                      </BarChart>
                     </ResponsiveContainer>
                   </div>
 
-                  {/* Monthly Meeting Hours */}
+                  {/* Meetings & Hours by Year */}
                   <div className="bg-white rounded-2xl p-5 shadow-sm">
                     <p className="text-[13px] text-[#86868b] font-medium mb-4">
-                      Meetings & Hours by Month
+                      Meetings & Hours by Year
                     </p>
                     <ResponsiveContainer width="100%" height={300}>
-                      <ComposedChart data={filteredMonthly}>
+                      <ComposedChart data={yearly}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                         <XAxis
-                          dataKey="label"
-                          tick={{ fontSize: 10, fill: "#86868b" }}
+                          dataKey="year"
+                          tick={{ fontSize: 13, fill: "#1d1d1f", fontWeight: 600 }}
                           axisLine={false}
                           tickLine={false}
-                          interval={historyYear === "all" ? 5 : 0}
-                          angle={historyYear === "all" ? -45 : 0}
-                          textAnchor={historyYear === "all" ? "end" : "middle"}
-                          height={historyYear === "all" ? 60 : 30}
                         />
                         <YAxis
                           yAxisId="left"
@@ -1335,6 +1180,7 @@ export default function Dashboard() {
                           tick={{ fontSize: 12, fill: "#86868b" }}
                           axisLine={false}
                           tickLine={false}
+                          tickFormatter={(v) => `${v}h`}
                         />
                         <Tooltip
                           contentStyle={{
@@ -1345,17 +1191,18 @@ export default function Dashboard() {
                             fontSize: 12,
                           }}
                           formatter={(value, name) => [
-                            name === "Hours" ? `${value}h` : value,
+                            name === "Hours" ? `${Number(value).toLocaleString()}h` : Number(value).toLocaleString(),
                             name,
                           ]}
+                          labelFormatter={(label) => `Year ${label}`}
                         />
                         <Legend wrapperStyle={{ fontSize: 12 }} />
                         <Bar
                           yAxisId="left"
                           dataKey="meetings"
                           fill="#ff9500"
-                          radius={[4, 4, 0, 0]}
-                          maxBarSize={historyYear === "all" ? 12 : 28}
+                          radius={[6, 6, 0, 0]}
+                          maxBarSize={48}
                           name="Meetings"
                         />
                         <Line
@@ -1363,78 +1210,109 @@ export default function Dashboard() {
                           type="monotone"
                           dataKey="meetingHours"
                           stroke="#ff3b30"
-                          strokeWidth={2}
-                          dot={false}
+                          strokeWidth={3}
+                          dot={{ fill: "#ff3b30", r: 5 }}
                           name="Hours"
                         />
                       </ComposedChart>
                     </ResponsiveContainer>
                   </div>
 
+                  {/* Year-over-Year Table */}
+                  <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
+                    <div className="px-5 pt-5 pb-3">
+                      <p className="text-[13px] text-[#86868b] font-medium">
+                        Year-over-Year Breakdown
+                      </p>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-[#f0f0f0]">
+                            <th className="text-left px-5 py-2.5 text-[11px] text-[#86868b] font-semibold uppercase tracking-wider">Year</th>
+                            <th className="text-right px-5 py-2.5 text-[11px] text-[#86868b] font-semibold uppercase tracking-wider">Received</th>
+                            <th className="text-right px-5 py-2.5 text-[11px] text-[#86868b] font-semibold uppercase tracking-wider">Sent</th>
+                            <th className="text-right px-5 py-2.5 text-[11px] text-[#86868b] font-semibold uppercase tracking-wider">Meetings</th>
+                            <th className="text-right px-5 py-2.5 text-[11px] text-[#86868b] font-semibold uppercase tracking-wider">Hours</th>
+                            <th className="text-right px-5 py-2.5 text-[11px] text-[#86868b] font-semibold uppercase tracking-wider">Change</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {yearly.map((y, i) => {
+                            const prev = i > 0 ? yearly[i - 1] : null;
+                            const emailChange =
+                              prev && prev.received > 0
+                                ? Math.round(((y.received - prev.received) / prev.received) * 100)
+                                : null;
+                            return (
+                              <tr key={y.year} className="border-b border-[#f5f5f5] last:border-0">
+                                <td className="px-5 py-3 font-semibold">{y.year}</td>
+                                <td className="px-5 py-3 text-right tabular-nums">{y.received.toLocaleString()}</td>
+                                <td className="px-5 py-3 text-right tabular-nums">{y.sent.toLocaleString()}</td>
+                                <td className="px-5 py-3 text-right tabular-nums">{y.meetings.toLocaleString()}</td>
+                                <td className="px-5 py-3 text-right tabular-nums">{y.meetingHours.toLocaleString()}h</td>
+                                <td className="px-5 py-3 text-right">
+                                  {emailChange !== null ? (
+                                    <span
+                                      className={`font-medium ${
+                                        emailChange >= 0 ? "text-emerald-500" : "text-red-500"
+                                      }`}
+                                    >
+                                      {emailChange > 0 ? "+" : ""}{emailChange}%
+                                    </span>
+                                  ) : (
+                                    <span className="text-[#d1d1d6]">---</span>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
                   {/* Insights */}
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                     <div className="bg-white rounded-2xl p-5 shadow-sm">
-                      <p className="text-[13px] text-[#86868b] font-medium mb-3">
-                        Peak Months
-                      </p>
+                      <p className="text-[13px] text-[#86868b] font-medium mb-3">Peaks</p>
                       <div className="space-y-3">
                         <div className="flex items-center justify-between">
                           <div>
-                            <p className="text-sm font-medium">Busiest Email Month</p>
-                            <p className="text-xs text-[#86868b]">{peakEmailMonth?.label}</p>
+                            <p className="text-sm font-medium">Busiest Email Year</p>
+                            <p className="text-xs text-[#86868b]">{peakEmailYear?.year}</p>
                           </div>
                           <p className="text-lg font-bold text-[#0071e3]">
-                            {((peakEmailMonth?.received || 0) + (peakEmailMonth?.sent || 0)).toLocaleString()}
+                            {((peakEmailYear?.received || 0) + (peakEmailYear?.sent || 0)).toLocaleString()}
                           </p>
                         </div>
                         <div className="flex items-center justify-between">
                           <div>
                             <p className="text-sm font-medium">Most Meetings</p>
-                            <p className="text-xs text-[#86868b]">{peakMeetingMonth?.label}</p>
+                            <p className="text-xs text-[#86868b]">{peakMeetingYear?.year}</p>
                           </div>
                           <p className="text-lg font-bold text-[#ff9500]">
-                            {peakMeetingMonth?.meetings.toLocaleString()}
+                            {peakMeetingYear?.meetings.toLocaleString()}
                           </p>
                         </div>
                       </div>
                     </div>
 
                     <div className="bg-white rounded-2xl p-5 shadow-sm">
-                      <p className="text-[13px] text-[#86868b] font-medium mb-3">
-                        Year-over-Year
-                      </p>
-                      <div className="space-y-2">
-                        {history.yearly.map((y, i) => {
-                          const prev = i > 0 ? history.yearly[i - 1] : null;
-                          const emailChange = prev && prev.received > 0
-                            ? Math.round(((y.received - prev.received) / prev.received) * 100)
-                            : null;
-                          return (
-                            <div key={y.year} className="flex items-center justify-between">
-                              <span className="text-sm font-medium">{y.year}</span>
-                              <div className="flex items-center gap-4 text-xs">
-                                <span className="text-[#86868b]">
-                                  {y.received.toLocaleString()} emails
-                                </span>
-                                <span className="text-[#86868b]">
-                                  {y.meetings.toLocaleString()} meetings
-                                </span>
-                                {emailChange !== null && (
-                                  <span
-                                    className={`font-medium ${
-                                      emailChange >= 0
-                                        ? "text-emerald-500"
-                                        : "text-red-500"
-                                    }`}
-                                  >
-                                    {emailChange > 0 ? "+" : ""}
-                                    {emailChange}%
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
+                      <p className="text-[13px] text-[#86868b] font-medium mb-3">Averages</p>
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <p className="text-sm font-medium">Emails per Year</p>
+                          <p className="text-lg font-bold">
+                            {Math.round(history.totalEmails / Math.max(yearly.length, 1)).toLocaleString()}
+                          </p>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <p className="text-sm font-medium">Meeting Hours per Year</p>
+                          <p className="text-lg font-bold">
+                            {Math.round(history.totalMeetingHours / Math.max(yearly.length, 1)).toLocaleString()}h
+                          </p>
+                        </div>
                       </div>
                     </div>
                   </div>
