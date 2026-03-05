@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import {
   BarChart,
   Bar,
+  Cell,
   XAxis,
   YAxis,
   Tooltip,
@@ -61,6 +63,12 @@ interface TaskList {
   totalCount: number;
 }
 
+interface TopContact {
+  name: string;
+  email: string;
+  count: number;
+}
+
 interface DashboardData {
   user: { name: string; email: string; photo: string };
   today: {
@@ -70,7 +78,7 @@ interface DashboardData {
   };
   calendar: {
     upcoming: CalendarEvent[];
-    weeklyData: { day: string; meetings: number; hours: number }[];
+    weeklyData: { day: string; meetings: number; hours: number; focusHours: number }[];
     totalMeetingsThisWeek: number;
     meetingHoursThisWeek: number;
   };
@@ -113,6 +121,9 @@ interface DashboardData {
     totalInbox: number;
     period: string;
   };
+  topContacts: TopContact[];
+  lastWeek: { received: number; meetings: number; meetingHours: number };
+  busiestHours: { hour: number; label: string; count: number }[];
   generatedAt: string;
 }
 
@@ -133,6 +144,36 @@ interface HistoryData {
   totalEmails: number;
   totalMeetings: number;
   totalMeetingHours: number;
+}
+
+interface HeatmapDay {
+  date: string;
+  count: number;
+}
+
+/* ─── Hooks ─── */
+function useCountUp(target: number, duration = 800) {
+  const [value, setValue] = useState(0);
+  const prevTarget = useRef(0);
+
+  useEffect(() => {
+    if (target === prevTarget.current) return;
+    const start = prevTarget.current;
+    prevTarget.current = target;
+    const startTime = performance.now();
+
+    function animate(now: number) {
+      const elapsed = now - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      const eased = 1 - Math.pow(1 - progress, 3); // ease-out cubic
+      setValue(Math.round(start + (target - start) * eased));
+      if (progress < 1) requestAnimationFrame(animate);
+    }
+
+    requestAnimationFrame(animate);
+  }, [target, duration]);
+
+  return value;
 }
 
 /* ─── Helpers ─── */
@@ -201,25 +242,222 @@ function getGreeting() {
   return "Good evening";
 }
 
+function wowArrow(current: number, previous: number) {
+  if (previous === 0) return null;
+  const pct = Math.round(((current - previous) / previous) * 100);
+  if (pct === 0) return null;
+  return { pct, up: pct > 0 };
+}
+
 /* ─── Components ─── */
+function AnimatedNumber({ value }: { value: number }) {
+  const display = useCountUp(value);
+  return <>{display.toLocaleString()}</>;
+}
+
 function KpiCard({
   label,
   value,
   sub,
   accent,
+  wow,
+  gradient,
 }: {
   label: string;
   value: string | number;
   sub?: string;
   accent?: string;
+  wow?: { pct: number; up: boolean } | null;
+  gradient?: string;
 }) {
+  const isNum = typeof value === "number";
   return (
-    <div className="bg-white rounded-2xl p-5 shadow-sm">
-      <p className="text-[13px] text-[#86868b] font-medium">{label}</p>
-      <p className={`text-3xl font-bold tracking-tight mt-1 ${accent || ""}`}>
-        {value}
-      </p>
-      {sub && <p className="text-[12px] text-[#86868b] mt-1">{sub}</p>}
+    <div className={`rounded-2xl p-5 shadow-sm card-hover ${gradient || "bg-white"}`}>
+      <p className={`text-[13px] font-medium ${gradient ? "text-white/60" : "text-[#86868b]"}`}>{label}</p>
+      <div className="flex items-end gap-2">
+        <p className={`text-3xl font-bold tracking-tight mt-1 ${accent || ""} ${gradient ? "text-white" : ""}`}>
+          {isNum ? <AnimatedNumber value={value} /> : value}
+        </p>
+        {wow && (
+          <span className={`text-xs font-semibold mb-1 ${wow.up ? "text-emerald-500" : "text-red-400"}`}>
+            {wow.up ? "\u2191" : "\u2193"}{Math.abs(wow.pct)}%
+          </span>
+        )}
+      </div>
+      {sub && <p className={`text-[12px] mt-1 ${gradient ? "text-white/50" : "text-[#86868b]"}`}>{sub}</p>}
+    </div>
+  );
+}
+
+function SkeletonCard() {
+  return (
+    <div className="bg-white rounded-2xl p-5 shadow-sm space-y-3">
+      <div className="skeleton h-3 w-20" />
+      <div className="skeleton h-8 w-28" />
+      <div className="skeleton h-3 w-16" />
+    </div>
+  );
+}
+
+function SkeletonList({ rows = 5 }: { rows?: number }) {
+  return (
+    <div className="bg-white rounded-2xl p-5 shadow-sm space-y-4">
+      <div className="skeleton h-3 w-24" />
+      {Array.from({ length: rows }).map((_, i) => (
+        <div key={i} className="flex gap-3 items-center">
+          <div className="skeleton h-3 w-3 rounded-full" />
+          <div className="skeleton h-3 flex-1" />
+          <div className="skeleton h-3 w-12" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function StorageRing({ percent }: { percent: number }) {
+  const r = 36;
+  const circumference = 2 * Math.PI * r;
+  const offset = circumference - (Math.min(percent, 100) / 100) * circumference;
+
+  return (
+    <div className="relative w-24 h-24">
+      <svg className="w-24 h-24 -rotate-90" viewBox="0 0 80 80">
+        <circle cx="40" cy="40" r={r} fill="none" stroke="#f0f0f0" strokeWidth="6" />
+        <motion.circle
+          cx="40"
+          cy="40"
+          r={r}
+          fill="none"
+          stroke="url(#ringGrad)"
+          strokeWidth="6"
+          strokeLinecap="round"
+          strokeDasharray={circumference}
+          initial={{ strokeDashoffset: circumference }}
+          animate={{ strokeDashoffset: offset }}
+          transition={{ duration: 1.2, ease: "easeOut" }}
+        />
+        <defs>
+          <linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stopColor="#0071e3" />
+            <stop offset="100%" stopColor="#5856d6" />
+          </linearGradient>
+        </defs>
+      </svg>
+      <div className="absolute inset-0 flex items-center justify-center">
+        <span className="text-sm font-bold">{percent}%</span>
+      </div>
+    </div>
+  );
+}
+
+function CalendarHeatmap({ days }: { days: HeatmapDay[] }) {
+  if (!days.length) return null;
+
+  // Group by week (columns) starting from Sunday
+  const weeks: HeatmapDay[][] = [];
+  let currentWeek: HeatmapDay[] = [];
+
+  // Pad the first week
+  const firstDay = new Date(days[0].date).getDay();
+  for (let i = 0; i < firstDay; i++) {
+    currentWeek.push({ date: "", count: -1 });
+  }
+
+  for (const day of days) {
+    currentWeek.push(day);
+    if (currentWeek.length === 7) {
+      weeks.push(currentWeek);
+      currentWeek = [];
+    }
+  }
+  if (currentWeek.length > 0) weeks.push(currentWeek);
+
+  const maxCount = Math.max(...days.map((d) => d.count), 1);
+
+  function getColor(count: number) {
+    if (count < 0) return "transparent";
+    if (count === 0) return "#f0f0f0";
+    const intensity = Math.min(count / maxCount, 1);
+    if (intensity < 0.25) return "#c6e3ff";
+    if (intensity < 0.5) return "#6bb5ff";
+    if (intensity < 0.75) return "#0071e3";
+    return "#004999";
+  }
+
+  // Month labels
+  const months: { label: string; col: number }[] = [];
+  let lastMonth = -1;
+  weeks.forEach((week, wi) => {
+    for (const day of week) {
+      if (!day.date) continue;
+      const m = new Date(day.date).getMonth();
+      if (m !== lastMonth) {
+        months.push({
+          label: new Date(day.date).toLocaleDateString("en-US", { month: "short" }),
+          col: wi,
+        });
+        lastMonth = m;
+      }
+      break;
+    }
+  });
+
+  return (
+    <div className="overflow-x-auto scrollbar-hide">
+      <div className="min-w-[700px]">
+        {/* Month labels */}
+        <div className="flex ml-8 mb-1">
+          {months.map((m, i) => (
+            <div
+              key={i}
+              className="text-[10px] text-[#86868b]"
+              style={{
+                position: "relative",
+                left: `${(m.col / weeks.length) * 100}%`,
+                marginRight: i < months.length - 1 ? "auto" : 0,
+              }}
+            >
+              {m.label}
+            </div>
+          ))}
+        </div>
+        <div className="flex gap-[3px]">
+          {/* Day labels */}
+          <div className="flex flex-col gap-[3px] text-[10px] text-[#86868b] mr-1">
+            {["", "M", "", "W", "", "F", ""].map((d, i) => (
+              <div key={i} className="h-[11px] flex items-center justify-end w-5">{d}</div>
+            ))}
+          </div>
+          {weeks.map((week, wi) => (
+            <div key={wi} className="flex flex-col gap-[3px]">
+              {week.map((day, di) => (
+                <motion.div
+                  key={di}
+                  className="w-[11px] h-[11px] rounded-[2px]"
+                  style={{ backgroundColor: getColor(day.count) }}
+                  title={day.date ? `${day.date}: ${day.count} meetings` : ""}
+                  initial={{ scale: 0 }}
+                  animate={{ scale: 1 }}
+                  transition={{ delay: wi * 0.005, duration: 0.2 }}
+                />
+              ))}
+              {/* Pad incomplete weeks */}
+              {week.length < 7 &&
+                Array.from({ length: 7 - week.length }).map((_, i) => (
+                  <div key={`pad-${i}`} className="w-[11px] h-[11px]" />
+                ))}
+            </div>
+          ))}
+        </div>
+        {/* Legend */}
+        <div className="flex items-center gap-1 mt-2 ml-8">
+          <span className="text-[10px] text-[#86868b] mr-1">Less</span>
+          {["#f0f0f0", "#c6e3ff", "#6bb5ff", "#0071e3", "#004999"].map((c) => (
+            <div key={c} className="w-[11px] h-[11px] rounded-[2px]" style={{ backgroundColor: c }} />
+          ))}
+          <span className="text-[10px] text-[#86868b] ml-1">More</span>
+        </div>
+      </div>
     </div>
   );
 }
@@ -229,14 +467,14 @@ function NextMeetingCard({ event }: { event: CalendarEvent }) {
   const attendeeCount = event.attendees?.length || 0;
 
   return (
-    <div className="bg-gradient-to-br from-[#1d1d1f] to-[#2d2d2f] rounded-2xl p-5 text-white shadow-lg">
+    <div className="bg-gradient-to-br from-[#1d1d1f] to-[#2d2d2f] rounded-2xl p-5 text-white shadow-lg card-hover">
       <p className="text-[13px] text-white/50 font-medium">Next Meeting</p>
       <p className="text-lg font-semibold mt-2 leading-snug">
         {event.summary || "Untitled"}
       </p>
       <div className="flex items-center gap-3 mt-3">
         <span className="text-sm text-white/70">
-          {startTime ? `${formatTime(startTime)} · ${timeUntil(startTime)}` : "All day"}
+          {startTime ? `${formatTime(startTime)} \u00b7 ${timeUntil(startTime)}` : "All day"}
         </span>
       </div>
       <div className="flex items-center justify-between mt-4">
@@ -260,6 +498,20 @@ function NextMeetingCard({ event }: { event: CalendarEvent }) {
   );
 }
 
+const tooltipStyle = {
+  background: "#1d1d1f",
+  border: "none",
+  borderRadius: 10,
+  color: "#fff",
+  fontSize: 12,
+};
+
+const tabVariants = {
+  initial: { opacity: 0, y: 12 },
+  animate: { opacity: 1, y: 0 },
+  exit: { opacity: 0, y: -8 },
+};
+
 /* ─── Main ─── */
 export default function Dashboard() {
   const [data, setData] = useState<DashboardData | null>(null);
@@ -268,6 +520,7 @@ export default function Dashboard() {
   const [tab, setTab] = useState<"overview" | "calendar" | "email" | "inbox" | "drive" | "tasks" | "analytics">("overview");
   const [history, setHistory] = useState<HistoryData | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [heatmap, setHeatmap] = useState<HeatmapDay[] | null>(null);
 
   const fetchData = useCallback(() => {
     setLoading(true);
@@ -290,21 +543,32 @@ export default function Dashboard() {
   useEffect(() => {
     if (tab === "analytics" && !history && !historyLoading) {
       setHistoryLoading(true);
-      fetch("/api/history")
-        .then((r) => r.json())
-        .then((d) => {
-          if (!d.error) setHistory(d);
-        })
-        .finally(() => setHistoryLoading(false));
+      Promise.all([
+        fetch("/api/history").then((r) => r.json()),
+        fetch("/api/heatmap").then((r) => r.json()),
+      ]).then(([histData, heatData]) => {
+        if (!histData.error) setHistory(histData);
+        if (!heatData.error) setHeatmap(heatData.days);
+      }).finally(() => setHistoryLoading(false));
     }
   }, [tab, history, historyLoading]);
 
   if (loading && !data) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-center">
-          <div className="w-8 h-8 border-2 border-[#0071e3] border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-[#86868b] text-sm">Loading dashboard...</p>
+      <div className="min-h-screen pb-24">
+        <header className="sticky top-0 z-10 bg-[#fafafa]/80 backdrop-blur-xl border-b border-[#e5e5e5]/60">
+          <div className="max-w-6xl mx-auto px-6 py-4">
+            <div className="skeleton h-6 w-48 mb-2" />
+            <div className="skeleton h-4 w-32" />
+          </div>
+        </header>
+        <div className="max-w-6xl mx-auto px-6 mt-6">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            <SkeletonCard /><SkeletonCard /><SkeletonCard /><SkeletonCard />
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <SkeletonList /><SkeletonList />
+          </div>
         </div>
       </div>
     );
@@ -334,6 +598,12 @@ export default function Dashboard() {
         )
       : 0;
 
+  // Week-over-week comparisons
+  const thisWeekReceived = data.email.dailyStats.reduce((s, d) => s + d.received, 0);
+  const emailWow = wowArrow(thisWeekReceived, data.lastWeek.received);
+  const meetingWow = wowArrow(data.calendar.totalMeetingsThisWeek, data.lastWeek.meetings);
+  const hoursWow = wowArrow(data.calendar.meetingHoursThisWeek, data.lastWeek.meetingHours);
+
   const tabs = [
     { id: "overview" as const, label: "Overview" },
     { id: "calendar" as const, label: "Calendar" },
@@ -350,19 +620,36 @@ export default function Dashboard() {
       <header className="sticky top-0 z-10 bg-[#fafafa]/80 backdrop-blur-xl border-b border-[#e5e5e5]/60">
         <div className="max-w-6xl mx-auto px-6 py-4">
           <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-xl font-semibold tracking-tight">
-                {getGreeting()}, {firstName}
-              </h1>
-              <p className="text-[13px] text-[#86868b]">
-                {new Date().toLocaleDateString("en-US", {
-                  weekday: "long",
-                  month: "long",
-                  day: "numeric",
-                })}
-              </p>
+            <div className="flex items-center gap-3">
+              {data.user.photo && (
+                <img
+                  src={data.user.photo}
+                  alt=""
+                  className="w-10 h-10 rounded-full ring-2 ring-white shadow-sm"
+                  referrerPolicy="no-referrer"
+                />
+              )}
+              <div>
+                <h1 className="text-xl font-semibold tracking-tight">
+                  {getGreeting()}, {firstName}
+                </h1>
+                <p className="text-[13px] text-[#86868b]">
+                  {new Date().toLocaleDateString("en-US", {
+                    weekday: "long",
+                    month: "long",
+                    day: "numeric",
+                  })}
+                </p>
+              </div>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-3">
+              {data.email.unreadCount > 0 && (
+                <div className="relative">
+                  <div className="bg-red-500 text-white text-[11px] font-bold px-2 py-0.5 rounded-full pulse-badge">
+                    {data.email.unreadCount}
+                  </div>
+                </div>
+              )}
               {loading && (
                 <div className="w-4 h-4 border-2 border-[#0071e3] border-t-transparent rounded-full animate-spin" />
               )}
@@ -380,9 +667,9 @@ export default function Dashboard() {
               <button
                 key={t.id}
                 onClick={() => setTab(t.id)}
-                className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors whitespace-nowrap ${
+                className={`px-4 py-2 text-sm font-medium rounded-lg transition-all whitespace-nowrap ${
                   tab === t.id
-                    ? "bg-[#1d1d1f] text-white"
+                    ? "bg-[#1d1d1f] text-white shadow-sm"
                     : "text-[#86868b] hover:text-[#1d1d1f] hover:bg-black/5"
                 }`}
               >
@@ -394,104 +681,388 @@ export default function Dashboard() {
       </header>
 
       <div className="max-w-6xl mx-auto px-6 mt-6">
-        {/* ─── OVERVIEW TAB ─── */}
-        {tab === "overview" && (
-          <div className="space-y-6">
-            {/* KPIs */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-              <KpiCard
-                label="Meetings Today"
-                value={data.today.meetingsLeft}
-                sub={`${data.calendar.totalMeetingsThisWeek} this week`}
-              />
-              <KpiCard
-                label="Unread Emails"
-                value={data.email.unreadCount}
-                sub={`${data.today.sentEmails} sent today`}
-                accent={data.email.unreadCount > 50 ? "text-red-500" : ""}
-              />
-              <KpiCard
-                label="Open Tasks"
-                value={data.tasks.totalOpen}
-                sub={
-                  data.tasks.overdue > 0
-                    ? `${data.tasks.overdue} overdue`
-                    : `${data.tasks.totalCompleted} completed`
-                }
-                accent={data.tasks.overdue > 0 ? "text-orange-500" : ""}
-              />
-              <KpiCard
-                label="Meeting Hours"
-                value={`${data.calendar.meetingHoursThisWeek}h`}
-                sub="this week"
-              />
-            </div>
+        <AnimatePresence mode="wait">
+          {/* ─── OVERVIEW TAB ─── */}
+          {tab === "overview" && (
+            <motion.div
+              key="overview"
+              variants={tabVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              transition={{ duration: 0.3 }}
+              className="space-y-6"
+            >
+              {/* KPIs */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 stagger">
+                <KpiCard
+                  label="Meetings Today"
+                  value={data.today.meetingsLeft}
+                  sub={`${data.calendar.totalMeetingsThisWeek} this week`}
+                  wow={meetingWow}
+                />
+                <KpiCard
+                  label="Unread Emails"
+                  value={data.email.unreadCount}
+                  sub={`${data.today.sentEmails} sent today`}
+                  accent={data.email.unreadCount > 50 ? "text-red-500" : ""}
+                  wow={emailWow}
+                />
+                <KpiCard
+                  label="Open Tasks"
+                  value={data.tasks.totalOpen}
+                  sub={
+                    data.tasks.overdue > 0
+                      ? `${data.tasks.overdue} overdue`
+                      : `${data.tasks.totalCompleted} completed`
+                  }
+                  accent={data.tasks.overdue > 0 ? "text-orange-500" : ""}
+                />
+                <KpiCard
+                  label="Meeting Hours"
+                  value={`${data.calendar.meetingHoursThisWeek}h`}
+                  sub="this week"
+                  wow={hoursWow}
+                />
+              </div>
 
-            {/* Next Meeting + Today's Agenda */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              <div>
-                {data.today.events.length > 0 ? (
-                  <NextMeetingCard event={data.today.events[0]} />
-                ) : (
-                  <div className="bg-gradient-to-br from-emerald-600 to-emerald-700 rounded-2xl p-5 text-white shadow-lg">
-                    <p className="text-[13px] text-white/50 font-medium">
-                      Today
+              {/* Next Meeting + Today's Agenda */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                <div>
+                  {data.today.events.length > 0 ? (
+                    <NextMeetingCard event={data.today.events[0]} />
+                  ) : (
+                    <div className="bg-gradient-to-br from-emerald-600 to-emerald-700 rounded-2xl p-5 text-white shadow-lg card-hover">
+                      <p className="text-[13px] text-white/50 font-medium">
+                        Today
+                      </p>
+                      <p className="text-lg font-semibold mt-2">No more meetings</p>
+                      <p className="text-sm text-white/70 mt-1">
+                        You have the rest of the day free
+                      </p>
+                    </div>
+                  )}
+                </div>
+                <div className="lg:col-span-2 bg-white rounded-2xl p-5 shadow-sm card-hover">
+                  <p className="text-[13px] text-[#86868b] font-medium mb-3">
+                    Today&apos;s Schedule
+                  </p>
+                  {data.today.events.length > 0 ? (
+                    <div className="space-y-3">
+                      {data.today.events.map((event, i) => (
+                        <div key={i} className="flex items-center gap-4">
+                          <span className="text-sm text-[#86868b] w-20 shrink-0 text-right font-mono">
+                            {event.start?.dateTime
+                              ? formatTime(event.start.dateTime)
+                              : "All day"}
+                          </span>
+                          <div className="w-2 h-2 rounded-full bg-[#0071e3] shrink-0" />
+                          <div className="flex-1 min-w-0 flex items-center justify-between gap-2">
+                            <p className="text-sm font-medium truncate">
+                              {event.summary || "Untitled"}
+                            </p>
+                            {event.hangoutLink && (
+                              <a
+                                href={event.hangoutLink}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-[#0071e3] text-xs font-medium shrink-0 hover:underline"
+                              >
+                                Join
+                              </a>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-[#86868b] text-sm py-4 text-center">
+                      No events scheduled today
                     </p>
-                    <p className="text-lg font-semibold mt-2">No more meetings</p>
-                    <p className="text-sm text-white/70 mt-1">
-                      You have the rest of the day free
+                  )}
+                </div>
+              </div>
+
+              {/* Charts Row */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {/* Focus Time vs Meeting Load */}
+                <div className="bg-white rounded-2xl p-5 shadow-sm card-hover">
+                  <p className="text-[13px] text-[#86868b] font-medium mb-4">
+                    Focus vs Meeting Time
+                  </p>
+                  <ResponsiveContainer width="100%" height={180}>
+                    <BarChart data={data.calendar.weeklyData}>
+                      <XAxis
+                        dataKey="day"
+                        tick={{ fontSize: 12, fill: "#86868b" }}
+                        axisLine={false}
+                        tickLine={false}
+                      />
+                      <YAxis hide />
+                      <Tooltip contentStyle={tooltipStyle}
+                        formatter={(value, name) => [`${value}h`, name]}
+                      />
+                      <Legend wrapperStyle={{ fontSize: 11 }} />
+                      <Bar
+                        dataKey="focusHours"
+                        fill="#34c759"
+                        radius={[6, 6, 0, 0]}
+                        maxBarSize={24}
+                        stackId="time"
+                        name="Focus"
+                      />
+                      <Bar
+                        dataKey="hours"
+                        fill="#0071e3"
+                        radius={[6, 6, 0, 0]}
+                        maxBarSize={24}
+                        stackId="time"
+                        name="Meetings"
+                      />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+
+                {/* Email Volume */}
+                <div className="bg-white rounded-2xl p-5 shadow-sm card-hover">
+                  <p className="text-[13px] text-[#86868b] font-medium mb-4">
+                    Email Volume (7 Days)
+                  </p>
+                  <ResponsiveContainer width="100%" height={180}>
+                    <AreaChart data={data.email.dailyStats}>
+                      <defs>
+                        <linearGradient id="colorReceived" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#0071e3" stopOpacity={0.15} />
+                          <stop offset="95%" stopColor="#0071e3" stopOpacity={0} />
+                        </linearGradient>
+                        <linearGradient id="colorSent" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#34c759" stopOpacity={0.15} />
+                          <stop offset="95%" stopColor="#34c759" stopOpacity={0} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                      <XAxis
+                        dataKey="dayLabel"
+                        tick={{ fontSize: 12, fill: "#86868b" }}
+                        axisLine={false}
+                        tickLine={false}
+                      />
+                      <YAxis hide />
+                      <Tooltip contentStyle={tooltipStyle} />
+                      <Area
+                        type="monotone"
+                        dataKey="received"
+                        stroke="#0071e3"
+                        strokeWidth={2}
+                        fillOpacity={1}
+                        fill="url(#colorReceived)"
+                        name="Received"
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="sent"
+                        stroke="#34c759"
+                        strokeWidth={2}
+                        fillOpacity={1}
+                        fill="url(#colorSent)"
+                        name="Sent"
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              {/* Top Contacts + Busiest Hours */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {/* Top Contacts */}
+                <div className="bg-white rounded-2xl shadow-sm overflow-hidden card-hover">
+                  <div className="px-5 pt-5 pb-3">
+                    <p className="text-[13px] text-[#86868b] font-medium">
+                      Top Contacts
                     </p>
                   </div>
-                )}
-              </div>
-              <div className="lg:col-span-2 bg-white rounded-2xl p-5 shadow-sm">
-                <p className="text-[13px] text-[#86868b] font-medium mb-3">
-                  Today&apos;s Schedule
-                </p>
-                {data.today.events.length > 0 ? (
-                  <div className="space-y-3">
-                    {data.today.events.map((event, i) => (
-                      <div key={i} className="flex items-center gap-4">
-                        <span className="text-sm text-[#86868b] w-20 shrink-0 text-right font-mono">
-                          {event.start?.dateTime
-                            ? formatTime(event.start.dateTime)
-                            : "All day"}
-                        </span>
-                        <div className="w-2 h-2 rounded-full bg-[#0071e3] shrink-0" />
-                        <div className="flex-1 min-w-0 flex items-center justify-between gap-2">
-                          <p className="text-sm font-medium truncate">
-                            {event.summary || "Untitled"}
-                          </p>
-                          {event.hangoutLink && (
-                            <a
-                              href={event.hangoutLink}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-[#0071e3] text-xs font-medium shrink-0 hover:underline"
-                            >
-                              Join
-                            </a>
-                          )}
+                  <div className="divide-y divide-[#f5f5f5]">
+                    {data.topContacts.slice(0, 6).map((contact, i) => {
+                      const maxCount = data.topContacts[0]?.count || 1;
+                      return (
+                        <div key={contact.email} className="px-5 py-3 flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#0071e3] to-[#5856d6] flex items-center justify-center text-white text-xs font-bold shrink-0">
+                            {contact.name.charAt(0).toUpperCase()}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium truncate">{contact.name}</p>
+                            <div className="mt-1 h-1.5 bg-[#f0f0f0] rounded-full overflow-hidden">
+                              <motion.div
+                                className="h-full bg-gradient-to-r from-[#0071e3] to-[#5856d6] rounded-full"
+                                initial={{ width: 0 }}
+                                animate={{ width: `${(contact.count / maxCount) * 100}%` }}
+                                transition={{ duration: 0.8, delay: i * 0.1 }}
+                              />
+                            </div>
+                          </div>
+                          <span className="text-xs text-[#86868b] font-medium tabular-nums shrink-0">
+                            {contact.count}
+                          </span>
                         </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Busiest Hours */}
+                <div className="bg-white rounded-2xl p-5 shadow-sm card-hover">
+                  <p className="text-[13px] text-[#86868b] font-medium mb-4">
+                    Busiest Hours This Week
+                  </p>
+                  <ResponsiveContainer width="100%" height={180}>
+                    <BarChart data={data.busiestHours}>
+                      <XAxis
+                        dataKey="label"
+                        tick={{ fontSize: 11, fill: "#86868b" }}
+                        axisLine={false}
+                        tickLine={false}
+                      />
+                      <YAxis hide />
+                      <Tooltip contentStyle={tooltipStyle}
+                        formatter={(value) => [value, "Meetings"]}
+                        labelFormatter={(l) => `${l}`}
+                      />
+                      <Bar
+                        dataKey="count"
+                        radius={[4, 4, 0, 0]}
+                        maxBarSize={28}
+                        name="Meetings"
+                      >
+                        {data.busiestHours.map((entry, index) => {
+                          const maxC = Math.max(...data.busiestHours.map((h) => h.count), 1);
+                          const intensity = entry.count / maxC;
+                          const fill = intensity > 0.7 ? "#0071e3" : intensity > 0.3 ? "#5ac8fa" : "#e8f4fd";
+                          return <Cell key={index} fill={fill} />;
+                        })}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              {/* Recent Emails + Files */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <div className="bg-white rounded-2xl shadow-sm overflow-hidden card-hover">
+                  <div className="px-5 pt-5 pb-3 flex items-center justify-between">
+                    <p className="text-[13px] text-[#86868b] font-medium">
+                      Recent Emails
+                    </p>
+                    <button
+                      onClick={() => setTab("email")}
+                      className="text-[#0071e3] text-xs font-medium"
+                    >
+                      View All
+                    </button>
+                  </div>
+                  <div className="divide-y divide-[#f5f5f5]">
+                    {data.email.recent.slice(0, 5).map((email) => (
+                      <div key={email.id} className="px-5 py-3 hover:bg-[#f9f9f9] transition-colors">
+                        <div className="flex items-center gap-2">
+                          {email.isUnread && (
+                            <div className="w-1.5 h-1.5 rounded-full bg-[#0071e3] shrink-0" />
+                          )}
+                          <p
+                            className={`text-sm truncate flex-1 ${
+                              email.isUnread ? "font-semibold" : "text-[#1d1d1f]/80"
+                            }`}
+                          >
+                            {parseFromName(email.from)}
+                          </p>
+                          <span className="text-[11px] text-[#86868b] shrink-0">
+                            {formatRelative(email.date)}
+                          </span>
+                        </div>
+                        <p className="text-[13px] text-[#1d1d1f]/60 truncate mt-0.5">
+                          {email.subject || "(no subject)"}
+                        </p>
                       </div>
                     ))}
                   </div>
-                ) : (
-                  <p className="text-[#86868b] text-sm py-4 text-center">
-                    No events scheduled today
-                  </p>
-                )}
-              </div>
-            </div>
+                </div>
 
-            {/* Charts Row */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              {/* Meeting Load */}
-              <div className="bg-white rounded-2xl p-5 shadow-sm">
+                <div className="bg-white rounded-2xl shadow-sm overflow-hidden card-hover">
+                  <div className="px-5 pt-5 pb-3 flex items-center justify-between">
+                    <p className="text-[13px] text-[#86868b] font-medium">
+                      Recent Files
+                    </p>
+                    <button
+                      onClick={() => setTab("drive")}
+                      className="text-[#0071e3] text-xs font-medium"
+                    >
+                      View All
+                    </button>
+                  </div>
+                  <div className="divide-y divide-[#f5f5f5]">
+                    {data.drive.recentFiles.slice(0, 5).map((file) => (
+                      <a
+                        key={file.id}
+                        href={file.webViewLink}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-5 py-3 flex items-center gap-3 hover:bg-[#f9f9f9] transition-colors block"
+                      >
+                        <div className={`w-2 h-2 rounded-full ${mimeDot(file.mimeType)} shrink-0`} />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">
+                            {file.name}
+                          </p>
+                          <p className="text-[11px] text-[#86868b]">
+                            {mimeLabel(file.mimeType)} \u00b7 {formatRelative(file.modifiedTime)}
+                          </p>
+                        </div>
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {/* ─── CALENDAR TAB ─── */}
+          {tab === "calendar" && (
+            <motion.div
+              key="calendar"
+              variants={tabVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              transition={{ duration: 0.3 }}
+              className="space-y-6"
+            >
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 stagger">
+                <KpiCard
+                  label="Meetings This Week"
+                  value={data.calendar.totalMeetingsThisWeek}
+                  wow={meetingWow}
+                />
+                <KpiCard
+                  label="Meeting Hours"
+                  value={`${data.calendar.meetingHoursThisWeek}h`}
+                  wow={hoursWow}
+                />
+                <KpiCard
+                  label="Focus Hours"
+                  value={`${Math.max(0, Math.round((45 - data.calendar.meetingHoursThisWeek) * 10) / 10)}h`}
+                  sub="of 45h work week"
+                />
+                <KpiCard
+                  label="Avg Per Day"
+                  value={`${Math.round((data.calendar.meetingHoursThisWeek / 5) * 10) / 10}h`}
+                  sub="weekdays"
+                />
+              </div>
+
+              {/* Focus Time vs Meetings */}
+              <div className="bg-white rounded-2xl p-5 shadow-sm card-hover">
                 <p className="text-[13px] text-[#86868b] font-medium mb-4">
-                  Meeting Load This Week
+                  Focus vs Meeting Time
                 </p>
-                <ResponsiveContainer width="100%" height={180}>
+                <ResponsiveContainer width="100%" height={220}>
                   <BarChart data={data.calendar.weeklyData}>
                     <XAxis
                       dataKey="day"
@@ -499,45 +1070,145 @@ export default function Dashboard() {
                       axisLine={false}
                       tickLine={false}
                     />
-                    <YAxis hide />
-                    <Tooltip
-                      contentStyle={{
-                        background: "#1d1d1f",
-                        border: "none",
-                        borderRadius: 10,
-                        color: "#fff",
-                        fontSize: 12,
-                      }}
-                      formatter={(value, name) => [
-                        name === "hours" ? `${value}h` : value,
-                        name === "hours" ? "Hours" : "Meetings",
-                      ]}
+                    <YAxis
+                      tick={{ fontSize: 12, fill: "#86868b" }}
+                      axisLine={false}
+                      tickLine={false}
+                      tickFormatter={(v) => `${v}h`}
+                    />
+                    <Tooltip contentStyle={tooltipStyle}
+                      formatter={(value, name) => [`${value}h`, name]}
                     />
                     <Legend wrapperStyle={{ fontSize: 12 }} />
-                    <Bar
-                      dataKey="meetings"
-                      fill="#0071e3"
-                      radius={[6, 6, 0, 0]}
-                      maxBarSize={32}
-                      name="Meetings"
-                    />
+                    <Bar dataKey="focusHours" fill="#34c759" radius={[0, 0, 0, 0]} maxBarSize={40} name="Focus" stackId="s" />
+                    <Bar dataKey="hours" fill="#0071e3" radius={[6, 6, 0, 0]} maxBarSize={40} name="Meetings" stackId="s" />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
 
-              {/* Email Volume */}
-              <div className="bg-white rounded-2xl p-5 shadow-sm">
+              {/* Busiest Hours */}
+              <div className="bg-white rounded-2xl p-5 shadow-sm card-hover">
+                <p className="text-[13px] text-[#86868b] font-medium mb-4">
+                  Busiest Hours
+                </p>
+                <ResponsiveContainer width="100%" height={160}>
+                  <BarChart data={data.busiestHours}>
+                    <XAxis
+                      dataKey="label"
+                      tick={{ fontSize: 11, fill: "#86868b" }}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+                    <YAxis hide />
+                    <Tooltip contentStyle={tooltipStyle} formatter={(value) => [value, "Meetings"]} />
+                    <Bar dataKey="count" fill="#5856d6" radius={[4, 4, 0, 0]} maxBarSize={32} name="Meetings" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+
+              <div className="bg-white rounded-2xl shadow-sm overflow-hidden card-hover">
+                <div className="px-5 pt-5 pb-3">
+                  <p className="text-[13px] text-[#86868b] font-medium">
+                    Upcoming Events
+                  </p>
+                </div>
+                <div className="divide-y divide-[#f5f5f5]">
+                  {data.calendar.upcoming.map((event, i) => {
+                    const startDt = event.start?.dateTime;
+                    const startDate = event.start?.dateTime || event.start?.date || "";
+                    const dateLabel = new Date(startDate).toLocaleDateString("en-US", {
+                      weekday: "short",
+                      month: "short",
+                      day: "numeric",
+                    });
+                    return (
+                      <div
+                        key={i}
+                        className="px-5 py-3.5 flex items-center gap-4 hover:bg-[#f9f9f9] transition-colors"
+                      >
+                        <div className="w-24 shrink-0">
+                          <p className="text-[11px] text-[#86868b] uppercase">{dateLabel}</p>
+                          <p className="text-sm font-mono text-[#1d1d1f]">
+                            {startDt ? formatTime(startDt) : "All day"}
+                          </p>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">
+                            {event.summary || "Untitled"}
+                          </p>
+                          {event.location && (
+                            <p className="text-[11px] text-[#86868b] truncate mt-0.5">
+                              {event.location}
+                            </p>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          {event.attendees && event.attendees.length > 1 && (
+                            <span className="text-[11px] text-[#86868b]">
+                              {event.attendees.length}
+                            </span>
+                          )}
+                          {event.hangoutLink && (
+                            <a
+                              href={event.hangoutLink}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="bg-[#0071e3] text-white text-xs font-medium px-3 py-1.5 rounded-lg hover:bg-[#0077ED] transition-colors"
+                            >
+                              Join
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {/* ─── EMAIL TAB ─── */}
+          {tab === "email" && (
+            <motion.div
+              key="email"
+              variants={tabVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              transition={{ duration: 0.3 }}
+              className="space-y-6"
+            >
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 stagger">
+                <KpiCard
+                  label="Unread"
+                  value={data.email.unreadCount}
+                  accent={data.email.unreadCount > 50 ? "text-red-500" : ""}
+                />
+                <KpiCard label="Inbox Total" value={data.email.inboxTotal} />
+                <KpiCard label="Sent Today" value={data.today.sentEmails} />
+                <KpiCard
+                  label="Avg Received / Day"
+                  value={Math.round(
+                    data.email.dailyStats.reduce((s, d) => s + d.received, 0) /
+                      Math.max(data.email.dailyStats.length, 1)
+                  )}
+                  sub="last 7 days"
+                  wow={emailWow}
+                />
+              </div>
+
+              <div className="bg-white rounded-2xl p-5 shadow-sm card-hover">
                 <p className="text-[13px] text-[#86868b] font-medium mb-4">
                   Email Volume (7 Days)
                 </p>
-                <ResponsiveContainer width="100%" height={180}>
+                <ResponsiveContainer width="100%" height={240}>
                   <AreaChart data={data.email.dailyStats}>
                     <defs>
-                      <linearGradient id="colorReceived" x1="0" y1="0" x2="0" y2="1">
+                      <linearGradient id="colorReceived2" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="5%" stopColor="#0071e3" stopOpacity={0.15} />
                         <stop offset="95%" stopColor="#0071e3" stopOpacity={0} />
                       </linearGradient>
-                      <linearGradient id="colorSent" x1="0" y1="0" x2="0" y2="1">
+                      <linearGradient id="colorSent2" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="5%" stopColor="#34c759" stopOpacity={0.15} />
                         <stop offset="95%" stopColor="#34c759" stopOpacity={0} />
                       </linearGradient>
@@ -549,23 +1220,19 @@ export default function Dashboard() {
                       axisLine={false}
                       tickLine={false}
                     />
-                    <YAxis hide />
-                    <Tooltip
-                      contentStyle={{
-                        background: "#1d1d1f",
-                        border: "none",
-                        borderRadius: 10,
-                        color: "#fff",
-                        fontSize: 12,
-                      }}
+                    <YAxis
+                      tick={{ fontSize: 12, fill: "#86868b" }}
+                      axisLine={false}
+                      tickLine={false}
                     />
+                    <Tooltip contentStyle={tooltipStyle} />
                     <Area
                       type="monotone"
                       dataKey="received"
                       stroke="#0071e3"
                       strokeWidth={2}
                       fillOpacity={1}
-                      fill="url(#colorReceived)"
+                      fill="url(#colorReceived2)"
                       name="Received"
                     />
                     <Area
@@ -574,1000 +1241,750 @@ export default function Dashboard() {
                       stroke="#34c759"
                       strokeWidth={2}
                       fillOpacity={1}
-                      fill="url(#colorSent)"
+                      fill="url(#colorSent2)"
                       name="Sent"
                     />
                   </AreaChart>
                 </ResponsiveContainer>
               </div>
-            </div>
 
-            {/* Recent Emails + Files */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
-                <div className="px-5 pt-5 pb-3 flex items-center justify-between">
-                  <p className="text-[13px] text-[#86868b] font-medium">
-                    Recent Emails
-                  </p>
-                  <button
-                    onClick={() => setTab("email")}
-                    className="text-[#0071e3] text-xs font-medium"
-                  >
-                    View All
-                  </button>
+              {/* Top Contacts */}
+              <div className="bg-white rounded-2xl shadow-sm overflow-hidden card-hover">
+                <div className="px-5 pt-5 pb-3">
+                  <p className="text-[13px] text-[#86868b] font-medium">Top Contacts</p>
                 </div>
                 <div className="divide-y divide-[#f5f5f5]">
-                  {data.email.recent.slice(0, 5).map((email) => (
-                    <div key={email.id} className="px-5 py-3 hover:bg-[#f9f9f9] transition-colors">
-                      <div className="flex items-center gap-2">
-                        {email.isUnread && (
-                          <div className="w-1.5 h-1.5 rounded-full bg-[#0071e3] shrink-0" />
-                        )}
-                        <p
-                          className={`text-sm truncate flex-1 ${
-                            email.isUnread ? "font-semibold" : "text-[#1d1d1f]/80"
-                          }`}
-                        >
-                          {parseFromName(email.from)}
-                        </p>
-                        <span className="text-[11px] text-[#86868b] shrink-0">
-                          {formatRelative(email.date)}
-                        </span>
+                  {data.topContacts.slice(0, 8).map((contact, i) => {
+                    const maxCount = data.topContacts[0]?.count || 1;
+                    return (
+                      <div key={contact.email} className="px-5 py-3 flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#0071e3] to-[#5856d6] flex items-center justify-center text-white text-xs font-bold shrink-0">
+                          {contact.name.charAt(0).toUpperCase()}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">{contact.name}</p>
+                          <p className="text-[11px] text-[#86868b] truncate">{contact.email}</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <div className="w-16 h-1.5 bg-[#f0f0f0] rounded-full overflow-hidden">
+                            <motion.div
+                              className="h-full bg-gradient-to-r from-[#0071e3] to-[#5856d6] rounded-full"
+                              initial={{ width: 0 }}
+                              animate={{ width: `${(contact.count / maxCount) * 100}%` }}
+                              transition={{ duration: 0.8, delay: i * 0.1 }}
+                            />
+                          </div>
+                          <span className="text-xs text-[#86868b] font-medium tabular-nums w-6 text-right">
+                            {contact.count}
+                          </span>
+                        </div>
                       </div>
-                      <p className="text-[13px] text-[#1d1d1f]/60 truncate mt-0.5">
-                        {email.subject || "(no subject)"}
-                      </p>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="bg-white rounded-2xl shadow-sm overflow-hidden card-hover">
+                <div className="px-5 pt-5 pb-3">
+                  <p className="text-[13px] text-[#86868b] font-medium">Inbox</p>
+                </div>
+                <div className="divide-y divide-[#f5f5f5]">
+                  {data.email.recent.map((email) => (
+                    <div
+                      key={email.id}
+                      className="px-5 py-3.5 hover:bg-[#f9f9f9] transition-colors"
+                    >
+                      <div className="flex items-center gap-3">
+                        {email.isUnread && (
+                          <div className="w-2 h-2 rounded-full bg-[#0071e3] shrink-0" />
+                        )}
+                        {!email.isUnread && <div className="w-2 shrink-0" />}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between gap-2">
+                            <p
+                              className={`text-sm truncate ${
+                                email.isUnread
+                                  ? "font-semibold"
+                                  : "font-medium text-[#1d1d1f]/80"
+                              }`}
+                            >
+                              {parseFromName(email.from)}
+                            </p>
+                            <span className="text-[11px] text-[#86868b] shrink-0">
+                              {formatRelative(email.date)}
+                            </span>
+                          </div>
+                          <p
+                            className={`text-sm truncate mt-0.5 ${
+                              email.isUnread ? "font-medium" : "text-[#1d1d1f]/70"
+                            }`}
+                          >
+                            {email.subject || "(no subject)"}
+                          </p>
+                          <p className="text-xs text-[#86868b] truncate mt-0.5">
+                            {email.snippet}
+                          </p>
+                        </div>
+                      </div>
                     </div>
                   ))}
                 </div>
               </div>
+            </motion.div>
+          )}
 
-              <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
-                <div className="px-5 pt-5 pb-3 flex items-center justify-between">
+          {/* ─── INBOX INTEL TAB ─── */}
+          {tab === "inbox" && (
+            <motion.div
+              key="inbox"
+              variants={tabVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              transition={{ duration: 0.3 }}
+              className="space-y-6"
+            >
+              {(() => {
+                const cats = data.emailCategories;
+                const total = cats.totalInbox || 1;
+                const colors: Record<string, string> = {
+                  dealFlow: "bg-[#0071e3]",
+                  intros: "bg-[#5856d6]",
+                  portfolio: "bg-emerald-500",
+                  newsletters: "bg-[#86868b]",
+                };
+                const dotColors: Record<string, string> = {
+                  dealFlow: "bg-[#0071e3]",
+                  intros: "bg-[#5856d6]",
+                  portfolio: "bg-emerald-500",
+                  newsletters: "bg-[#86868b]",
+                };
+
+                return (
+                  <>
+                    <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 stagger">
+                      {cats.categories.map((cat) => (
+                        <KpiCard
+                          key={cat.key}
+                          label={cat.label}
+                          value={cat.count}
+                          sub={`${Math.round((cat.count / total) * 100)}% of inbox`}
+                        />
+                      ))}
+                      <KpiCard
+                        label="Direct / Other"
+                        value={cats.otherCount}
+                        sub={`${Math.round((cats.otherCount / total) * 100)}% of inbox`}
+                      />
+                    </div>
+
+                    <div className="bg-white rounded-2xl p-5 shadow-sm card-hover">
+                      <div className="flex items-center justify-between mb-3">
+                        <p className="text-[13px] text-[#86868b] font-medium">
+                          Inbox Breakdown
+                        </p>
+                        <p className="text-[11px] text-[#86868b]">{cats.period}</p>
+                      </div>
+                      <div className="flex rounded-lg overflow-hidden h-8">
+                        {cats.categories.map((cat) => {
+                          const pct = (cat.count / total) * 100;
+                          if (pct < 1) return null;
+                          return (
+                            <div
+                              key={cat.key}
+                              className={`${colors[cat.key] || "bg-gray-400"} relative group transition-all hover:brightness-110`}
+                              style={{ width: `${pct}%` }}
+                              title={`${cat.label}: ${cat.count}`}
+                            >
+                              {pct > 8 && (
+                                <span className="absolute inset-0 flex items-center justify-center text-white text-[11px] font-medium">
+                                  {Math.round(pct)}%
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })}
+                        {cats.otherCount > 0 && (
+                          <div
+                            className="bg-[#e5e5e5] relative"
+                            style={{ width: `${(cats.otherCount / total) * 100}%` }}
+                            title={`Other: ${cats.otherCount}`}
+                          >
+                            {(cats.otherCount / total) * 100 > 8 && (
+                              <span className="absolute inset-0 flex items-center justify-center text-[#86868b] text-[11px] font-medium">
+                                {Math.round((cats.otherCount / total) * 100)}%
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap gap-4 mt-3">
+                        {cats.categories.map((cat) => (
+                          <div key={cat.key} className="flex items-center gap-1.5">
+                            <div className={`w-2.5 h-2.5 rounded-full ${dotColors[cat.key] || "bg-gray-400"}`} />
+                            <span className="text-[11px] text-[#86868b]">{cat.label}</span>
+                          </div>
+                        ))}
+                        <div className="flex items-center gap-1.5">
+                          <div className="w-2.5 h-2.5 rounded-full bg-[#e5e5e5]" />
+                          <span className="text-[11px] text-[#86868b]">Other</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {cats.categories.map((cat) => (
+                      <div key={cat.key} className="bg-white rounded-2xl shadow-sm overflow-hidden card-hover">
+                        <div className="px-5 pt-5 pb-3 flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <div className={`w-2.5 h-2.5 rounded-full ${dotColors[cat.key] || "bg-gray-400"}`} />
+                            <p className="text-[13px] font-semibold">{cat.label}</p>
+                          </div>
+                          <span className="text-[11px] text-[#86868b]">
+                            {cat.count} emails \u00b7 {cats.period.toLowerCase()}
+                          </span>
+                        </div>
+                        {cat.previews.length > 0 ? (
+                          <div className="divide-y divide-[#f5f5f5]">
+                            {cat.previews.map((email) => (
+                              <div
+                                key={email.id}
+                                className="px-5 py-3 hover:bg-[#f9f9f9] transition-colors"
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <p className="text-sm font-medium truncate">
+                                    {parseFromName(email.from)}
+                                  </p>
+                                  <span className="text-[11px] text-[#86868b] shrink-0">
+                                    {formatRelative(email.date)}
+                                  </span>
+                                </div>
+                                <p className="text-[13px] text-[#1d1d1f]/70 truncate mt-0.5">
+                                  {email.subject || "(no subject)"}
+                                </p>
+                                <p className="text-xs text-[#86868b] truncate mt-0.5">
+                                  {email.snippet}
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="px-5 pb-5 text-[#86868b] text-sm">
+                            No emails in this category
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </>
+                );
+              })()}
+            </motion.div>
+          )}
+
+          {/* ─── DRIVE TAB ─── */}
+          {tab === "drive" && (
+            <motion.div
+              key="drive"
+              variants={tabVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              transition={{ duration: 0.3 }}
+              className="space-y-6"
+            >
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 stagger">
+                <KpiCard label="Recent Files" value={data.drive.recentFiles.length} />
+                <KpiCard
+                  label="Storage Used"
+                  value={formatBytes(data.drive.storageUsed)}
+                  sub={
+                    data.drive.storageLimit !== "0"
+                      ? `of ${formatBytes(data.drive.storageLimit)}`
+                      : undefined
+                  }
+                />
+                <div className="bg-white rounded-2xl p-5 shadow-sm card-hover flex items-center gap-5">
+                  <StorageRing percent={storagePercent} />
+                  <div>
+                    <p className="text-[13px] text-[#86868b] font-medium">Storage</p>
+                    <p className="text-2xl font-bold mt-1">{storagePercent}%</p>
+                    <p className="text-[11px] text-[#86868b]">used</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-2xl shadow-sm overflow-hidden card-hover">
+                <div className="px-5 pt-5 pb-3">
                   <p className="text-[13px] text-[#86868b] font-medium">
-                    Recent Files
+                    Recently Modified
                   </p>
-                  <button
-                    onClick={() => setTab("drive")}
-                    className="text-[#0071e3] text-xs font-medium"
-                  >
-                    View All
-                  </button>
                 </div>
                 <div className="divide-y divide-[#f5f5f5]">
-                  {data.drive.recentFiles.slice(0, 5).map((file) => (
+                  {data.drive.recentFiles.map((file) => (
                     <a
                       key={file.id}
                       href={file.webViewLink}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="px-5 py-3 flex items-center gap-3 hover:bg-[#f9f9f9] transition-colors block"
+                      className="px-5 py-3.5 flex items-center gap-3 hover:bg-[#f9f9f9] transition-colors block"
                     >
-                      <div className={`w-2 h-2 rounded-full ${mimeDot(file.mimeType)} shrink-0`} />
+                      <div
+                        className={`w-2.5 h-2.5 rounded-full ${mimeDot(file.mimeType)} shrink-0`}
+                      />
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">
-                          {file.name}
-                        </p>
-                        <p className="text-[11px] text-[#86868b]">
-                          {mimeLabel(file.mimeType)} · {formatRelative(file.modifiedTime)}
+                        <p className="text-sm font-medium truncate">{file.name}</p>
+                        <p className="text-[11px] text-[#86868b] mt-0.5">
+                          {mimeLabel(file.mimeType)}
+                          {file.shared && " \u00b7 Shared"}
                         </p>
                       </div>
+                      <span className="text-[11px] text-[#86868b] shrink-0">
+                        {formatRelative(file.modifiedTime)}
+                      </span>
                     </a>
                   ))}
                 </div>
               </div>
-            </div>
-          </div>
-        )}
+            </motion.div>
+          )}
 
-        {/* ─── CALENDAR TAB ─── */}
-        {tab === "calendar" && (
-          <div className="space-y-6">
-            <div className="grid grid-cols-3 gap-4">
-              <KpiCard
-                label="Meetings This Week"
-                value={data.calendar.totalMeetingsThisWeek}
-              />
-              <KpiCard
-                label="Meeting Hours"
-                value={`${data.calendar.meetingHoursThisWeek}h`}
-              />
-              <KpiCard
-                label="Avg Per Day"
-                value={`${Math.round((data.calendar.meetingHoursThisWeek / 5) * 10) / 10}h`}
-                sub="weekdays"
-              />
-            </div>
-
-            <div className="bg-white rounded-2xl p-5 shadow-sm">
-              <p className="text-[13px] text-[#86868b] font-medium mb-4">
-                Weekly Meeting Load
-              </p>
-              <ResponsiveContainer width="100%" height={220}>
-                <BarChart data={data.calendar.weeklyData}>
-                  <XAxis
-                    dataKey="day"
-                    tick={{ fontSize: 12, fill: "#86868b" }}
-                    axisLine={false}
-                    tickLine={false}
-                  />
-                  <YAxis
-                    tick={{ fontSize: 12, fill: "#86868b" }}
-                    axisLine={false}
-                    tickLine={false}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      background: "#1d1d1f",
-                      border: "none",
-                      borderRadius: 10,
-                      color: "#fff",
-                      fontSize: 12,
-                    }}
-                    formatter={(value, name) => [
-                      name === "hours" ? `${value}h` : value,
-                      name === "hours" ? "Hours" : "Meetings",
-                    ]}
-                  />
-                  <Bar dataKey="meetings" fill="#0071e3" radius={[6, 6, 0, 0]} maxBarSize={40} name="Meetings" />
-                  <Bar dataKey="hours" fill="#34c759" radius={[6, 6, 0, 0]} maxBarSize={40} name="Hours" />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-
-            <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
-              <div className="px-5 pt-5 pb-3">
-                <p className="text-[13px] text-[#86868b] font-medium">
-                  Upcoming Events
-                </p>
+          {/* ─── TASKS TAB ─── */}
+          {tab === "tasks" && (
+            <motion.div
+              key="tasks"
+              variants={tabVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              transition={{ duration: 0.3 }}
+              className="space-y-6"
+            >
+              <div className="grid grid-cols-3 gap-4 stagger">
+                <KpiCard
+                  label="Open"
+                  value={data.tasks.totalOpen}
+                  accent={data.tasks.overdue > 0 ? "text-orange-500" : ""}
+                />
+                <KpiCard label="Completed" value={data.tasks.totalCompleted} />
+                <KpiCard
+                  label="Completion Rate"
+                  value={
+                    data.tasks.totalOpen + data.tasks.totalCompleted > 0
+                      ? `${Math.round(
+                          (data.tasks.totalCompleted /
+                            (data.tasks.totalOpen + data.tasks.totalCompleted)) *
+                            100
+                        )}%`
+                      : "---"
+                  }
+                />
               </div>
-              <div className="divide-y divide-[#f5f5f5]">
-                {data.calendar.upcoming.map((event, i) => {
-                  const startDt = event.start?.dateTime;
-                  const startDate = event.start?.dateTime || event.start?.date || "";
-                  const dateLabel = new Date(startDate).toLocaleDateString("en-US", {
-                    weekday: "short",
-                    month: "short",
-                    day: "numeric",
-                  });
-                  return (
-                    <div
-                      key={i}
-                      className="px-5 py-3.5 flex items-center gap-4 hover:bg-[#f9f9f9] transition-colors"
-                    >
-                      <div className="w-24 shrink-0">
-                        <p className="text-[11px] text-[#86868b] uppercase">{dateLabel}</p>
-                        <p className="text-sm font-mono text-[#1d1d1f]">
-                          {startDt ? formatTime(startDt) : "All day"}
-                        </p>
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">
-                          {event.summary || "Untitled"}
-                        </p>
-                        {event.location && (
-                          <p className="text-[11px] text-[#86868b] truncate mt-0.5">
-                            {event.location}
-                          </p>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        {event.attendees && event.attendees.length > 1 && (
-                          <span className="text-[11px] text-[#86868b]">
-                            {event.attendees.length}
-                          </span>
-                        )}
-                        {event.hangoutLink && (
-                          <a
-                            href={event.hangoutLink}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="bg-[#0071e3] text-white text-xs font-medium px-3 py-1.5 rounded-lg hover:bg-[#0077ED] transition-colors"
-                          >
-                            Join
-                          </a>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        )}
 
-        {/* ─── EMAIL TAB ─── */}
-        {tab === "email" && (
-          <div className="space-y-6">
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-              <KpiCard
-                label="Unread"
-                value={data.email.unreadCount}
-                accent={data.email.unreadCount > 50 ? "text-red-500" : ""}
-              />
-              <KpiCard label="Inbox Total" value={data.email.inboxTotal} />
-              <KpiCard label="Sent Today" value={data.today.sentEmails} />
-              <KpiCard
-                label="Avg Received / Day"
-                value={Math.round(
-                  data.email.dailyStats.reduce((s, d) => s + d.received, 0) /
-                    Math.max(data.email.dailyStats.length, 1)
-                )}
-                sub="last 7 days"
-              />
-            </div>
+              {data.tasks.overdue > 0 && (
+                <div className="bg-orange-50 border border-orange-200 rounded-2xl p-4">
+                  <p className="text-sm font-medium text-orange-700">
+                    {data.tasks.overdue} overdue task
+                    {data.tasks.overdue !== 1 ? "s" : ""}
+                  </p>
+                </div>
+              )}
 
-            <div className="bg-white rounded-2xl p-5 shadow-sm">
-              <p className="text-[13px] text-[#86868b] font-medium mb-4">
-                Email Volume (7 Days)
-              </p>
-              <ResponsiveContainer width="100%" height={240}>
-                <AreaChart data={data.email.dailyStats}>
-                  <defs>
-                    <linearGradient id="colorReceived2" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#0071e3" stopOpacity={0.15} />
-                      <stop offset="95%" stopColor="#0071e3" stopOpacity={0} />
-                    </linearGradient>
-                    <linearGradient id="colorSent2" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#34c759" stopOpacity={0.15} />
-                      <stop offset="95%" stopColor="#34c759" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                  <XAxis
-                    dataKey="dayLabel"
-                    tick={{ fontSize: 12, fill: "#86868b" }}
-                    axisLine={false}
-                    tickLine={false}
-                  />
-                  <YAxis
-                    tick={{ fontSize: 12, fill: "#86868b" }}
-                    axisLine={false}
-                    tickLine={false}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      background: "#1d1d1f",
-                      border: "none",
-                      borderRadius: 10,
-                      color: "#fff",
-                      fontSize: 12,
-                    }}
-                  />
-                  <Area
-                    type="monotone"
-                    dataKey="received"
-                    stroke="#0071e3"
-                    strokeWidth={2}
-                    fillOpacity={1}
-                    fill="url(#colorReceived2)"
-                    name="Received"
-                  />
-                  <Area
-                    type="monotone"
-                    dataKey="sent"
-                    stroke="#34c759"
-                    strokeWidth={2}
-                    fillOpacity={1}
-                    fill="url(#colorSent2)"
-                    name="Sent"
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-
-            <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
-              <div className="px-5 pt-5 pb-3">
-                <p className="text-[13px] text-[#86868b] font-medium">Inbox</p>
-              </div>
-              <div className="divide-y divide-[#f5f5f5]">
-                {data.email.recent.map((email) => (
-                  <div
-                    key={email.id}
-                    className="px-5 py-3.5 hover:bg-[#f9f9f9] transition-colors"
-                  >
-                    <div className="flex items-center gap-3">
-                      {email.isUnread && (
-                        <div className="w-2 h-2 rounded-full bg-[#0071e3] shrink-0" />
-                      )}
-                      {!email.isUnread && <div className="w-2 shrink-0" />}
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between gap-2">
-                          <p
-                            className={`text-sm truncate ${
-                              email.isUnread
-                                ? "font-semibold"
-                                : "font-medium text-[#1d1d1f]/80"
-                            }`}
-                          >
-                            {parseFromName(email.from)}
-                          </p>
-                          <span className="text-[11px] text-[#86868b] shrink-0">
-                            {formatRelative(email.date)}
-                          </span>
-                        </div>
-                        <p
-                          className={`text-sm truncate mt-0.5 ${
-                            email.isUnread ? "font-medium" : "text-[#1d1d1f]/70"
-                          }`}
-                        >
-                          {email.subject || "(no subject)"}
-                        </p>
-                        <p className="text-xs text-[#86868b] truncate mt-0.5">
-                          {email.snippet}
-                        </p>
-                      </div>
-                    </div>
+              {data.tasks.lists.map((list) => (
+                <div key={list.listName} className="bg-white rounded-2xl shadow-sm overflow-hidden card-hover">
+                  <div className="px-5 pt-5 pb-3 flex items-center justify-between">
+                    <p className="text-[13px] text-[#86868b] font-medium">
+                      {list.listName}
+                    </p>
+                    <span className="text-[11px] text-[#86868b]">
+                      {list.open.length} open \u00b7 {list.completedCount} done
+                    </span>
                   </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ─── INBOX INTEL TAB ─── */}
-        {tab === "inbox" && (
-          <div className="space-y-6">
-            {/* Category breakdown bar */}
-            {(() => {
-              const cats = data.emailCategories;
-              const total = cats.totalInbox || 1;
-              const colors: Record<string, string> = {
-                dealFlow: "bg-[#0071e3]",
-                intros: "bg-[#5856d6]",
-                portfolio: "bg-emerald-500",
-                newsletters: "bg-[#86868b]",
-              };
-              const dotColors: Record<string, string> = {
-                dealFlow: "bg-[#0071e3]",
-                intros: "bg-[#5856d6]",
-                portfolio: "bg-emerald-500",
-                newsletters: "bg-[#86868b]",
-              };
-
-              return (
-                <>
-                  {/* Summary cards */}
-                  <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-                    {cats.categories.map((cat) => (
-                      <KpiCard
-                        key={cat.key}
-                        label={cat.label}
-                        value={cat.count}
-                        sub={`${Math.round((cat.count / total) * 100)}% of inbox`}
-                      />
-                    ))}
-                    <KpiCard
-                      label="Direct / Other"
-                      value={cats.otherCount}
-                      sub={`${Math.round((cats.otherCount / total) * 100)}% of inbox`}
-                    />
-                  </div>
-
-                  {/* Visual breakdown bar */}
-                  <div className="bg-white rounded-2xl p-5 shadow-sm">
-                    <div className="flex items-center justify-between mb-3">
-                      <p className="text-[13px] text-[#86868b] font-medium">
-                        Inbox Breakdown
-                      </p>
-                      <p className="text-[11px] text-[#86868b]">{cats.period}</p>
-                    </div>
-                    <div className="flex rounded-lg overflow-hidden h-8">
-                      {cats.categories.map((cat) => {
-                        const pct = (cat.count / total) * 100;
-                        if (pct < 1) return null;
+                  {list.open.length > 0 ? (
+                    <div className="divide-y divide-[#f5f5f5]">
+                      {list.open.map((task) => {
+                        const isOverdue =
+                          task.due && new Date(task.due) < new Date();
                         return (
                           <div
-                            key={cat.key}
-                            className={`${colors[cat.key] || "bg-gray-400"} relative group`}
-                            style={{ width: `${pct}%` }}
-                            title={`${cat.label}: ${cat.count}`}
+                            key={task.id}
+                            className="px-5 py-3.5 flex items-start gap-3"
                           >
-                            {pct > 8 && (
-                              <span className="absolute inset-0 flex items-center justify-center text-white text-[11px] font-medium">
-                                {Math.round(pct)}%
-                              </span>
-                            )}
+                            <div
+                              className={`w-4 h-4 rounded-full border-2 mt-0.5 shrink-0 ${
+                                isOverdue
+                                  ? "border-orange-400"
+                                  : "border-[#d1d1d6]"
+                              }`}
+                            />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium">{task.title}</p>
+                              {task.due && (
+                                <p
+                                  className={`text-[11px] mt-0.5 ${
+                                    isOverdue
+                                      ? "text-orange-500 font-medium"
+                                      : "text-[#86868b]"
+                                  }`}
+                                >
+                                  {isOverdue ? "Overdue \u00b7 " : "Due "}
+                                  {new Date(task.due).toLocaleDateString("en-US", {
+                                    month: "short",
+                                    day: "numeric",
+                                  })}
+                                </p>
+                              )}
+                              {task.notes && (
+                                <p className="text-[11px] text-[#86868b] truncate mt-0.5">
+                                  {task.notes}
+                                </p>
+                              )}
+                            </div>
                           </div>
                         );
                       })}
-                      {cats.otherCount > 0 && (
-                        <div
-                          className="bg-[#e5e5e5] relative"
-                          style={{ width: `${(cats.otherCount / total) * 100}%` }}
-                          title={`Other: ${cats.otherCount}`}
-                        >
-                          {(cats.otherCount / total) * 100 > 8 && (
-                            <span className="absolute inset-0 flex items-center justify-center text-[#86868b] text-[11px] font-medium">
-                              {Math.round((cats.otherCount / total) * 100)}%
-                            </span>
-                          )}
-                        </div>
-                      )}
                     </div>
-                    <div className="flex flex-wrap gap-4 mt-3">
-                      {cats.categories.map((cat) => (
-                        <div key={cat.key} className="flex items-center gap-1.5">
-                          <div className={`w-2.5 h-2.5 rounded-full ${dotColors[cat.key] || "bg-gray-400"}`} />
-                          <span className="text-[11px] text-[#86868b]">{cat.label}</span>
-                        </div>
-                      ))}
-                      <div className="flex items-center gap-1.5">
-                        <div className="w-2.5 h-2.5 rounded-full bg-[#e5e5e5]" />
-                        <span className="text-[11px] text-[#86868b]">Other</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Category detail cards */}
-                  {cats.categories.map((cat) => (
-                    <div key={cat.key} className="bg-white rounded-2xl shadow-sm overflow-hidden">
-                      <div className="px-5 pt-5 pb-3 flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <div className={`w-2.5 h-2.5 rounded-full ${dotColors[cat.key] || "bg-gray-400"}`} />
-                          <p className="text-[13px] font-semibold">{cat.label}</p>
-                        </div>
-                        <span className="text-[11px] text-[#86868b]">
-                          {cat.count} emails · {cats.period.toLowerCase()}
-                        </span>
-                      </div>
-                      {cat.previews.length > 0 ? (
-                        <div className="divide-y divide-[#f5f5f5]">
-                          {cat.previews.map((email) => (
-                            <div
-                              key={email.id}
-                              className="px-5 py-3 hover:bg-[#f9f9f9] transition-colors"
-                            >
-                              <div className="flex items-center justify-between gap-2">
-                                <p className="text-sm font-medium truncate">
-                                  {parseFromName(email.from)}
-                                </p>
-                                <span className="text-[11px] text-[#86868b] shrink-0">
-                                  {formatRelative(email.date)}
-                                </span>
-                              </div>
-                              <p className="text-[13px] text-[#1d1d1f]/70 truncate mt-0.5">
-                                {email.subject || "(no subject)"}
-                              </p>
-                              <p className="text-xs text-[#86868b] truncate mt-0.5">
-                                {email.snippet}
-                              </p>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="px-5 pb-5 text-[#86868b] text-sm">
-                          No emails in this category
-                        </p>
-                      )}
-                    </div>
-                  ))}
-                </>
-              );
-            })()}
-          </div>
-        )}
-
-        {/* ─── DRIVE TAB ─── */}
-        {tab === "drive" && (
-          <div className="space-y-6">
-            <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
-              <KpiCard label="Recent Files" value={data.drive.recentFiles.length} />
-              <KpiCard
-                label="Storage Used"
-                value={formatBytes(data.drive.storageUsed)}
-                sub={
-                  data.drive.storageLimit !== "0"
-                    ? `${storagePercent}% of ${formatBytes(data.drive.storageLimit)}`
-                    : undefined
-                }
-              />
-              <div className="bg-white rounded-2xl p-5 shadow-sm">
-                <p className="text-[13px] text-[#86868b] font-medium">Storage</p>
-                <div className="mt-3">
-                  <div className="w-full bg-[#f0f0f0] rounded-full h-2.5">
-                    <div
-                      className="bg-[#0071e3] h-2.5 rounded-full transition-all"
-                      style={{ width: `${Math.min(storagePercent, 100)}%` }}
-                    />
-                  </div>
-                  <p className="text-xs text-[#86868b] mt-2">{storagePercent}% used</p>
+                  ) : (
+                    <p className="px-5 pb-5 text-[#86868b] text-sm">
+                      All tasks complete
+                    </p>
+                  )}
                 </div>
-              </div>
-            </div>
+              ))}
+            </motion.div>
+          )}
 
-            <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
-              <div className="px-5 pt-5 pb-3">
-                <p className="text-[13px] text-[#86868b] font-medium">
-                  Recently Modified
-                </p>
-              </div>
-              <div className="divide-y divide-[#f5f5f5]">
-                {data.drive.recentFiles.map((file) => (
-                  <a
-                    key={file.id}
-                    href={file.webViewLink}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="px-5 py-3.5 flex items-center gap-3 hover:bg-[#f9f9f9] transition-colors block"
-                  >
-                    <div
-                      className={`w-2.5 h-2.5 rounded-full ${mimeDot(file.mimeType)} shrink-0`}
-                    />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate">{file.name}</p>
-                      <p className="text-[11px] text-[#86868b] mt-0.5">
-                        {mimeLabel(file.mimeType)}
-                        {file.shared && " · Shared"}
-                      </p>
-                    </div>
-                    <span className="text-[11px] text-[#86868b] shrink-0">
-                      {formatRelative(file.modifiedTime)}
-                    </span>
-                  </a>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ─── TASKS TAB ─── */}
-        {tab === "tasks" && (
-          <div className="space-y-6">
-            <div className="grid grid-cols-3 gap-4">
-              <KpiCard
-                label="Open"
-                value={data.tasks.totalOpen}
-                accent={data.tasks.overdue > 0 ? "text-orange-500" : ""}
-              />
-              <KpiCard label="Completed" value={data.tasks.totalCompleted} />
-              <KpiCard
-                label="Completion Rate"
-                value={
-                  data.tasks.totalOpen + data.tasks.totalCompleted > 0
-                    ? `${Math.round(
-                        (data.tasks.totalCompleted /
-                          (data.tasks.totalOpen + data.tasks.totalCompleted)) *
-                          100
-                      )}%`
-                    : "---"
-                }
-              />
-            </div>
-
-            {data.tasks.overdue > 0 && (
-              <div className="bg-orange-50 border border-orange-200 rounded-2xl p-4">
-                <p className="text-sm font-medium text-orange-700">
-                  {data.tasks.overdue} overdue task
-                  {data.tasks.overdue !== 1 ? "s" : ""}
-                </p>
-              </div>
-            )}
-
-            {data.tasks.lists.map((list) => (
-              <div key={list.listName} className="bg-white rounded-2xl shadow-sm overflow-hidden">
-                <div className="px-5 pt-5 pb-3 flex items-center justify-between">
-                  <p className="text-[13px] text-[#86868b] font-medium">
-                    {list.listName}
-                  </p>
-                  <span className="text-[11px] text-[#86868b]">
-                    {list.open.length} open · {list.completedCount} done
-                  </span>
-                </div>
-                {list.open.length > 0 ? (
-                  <div className="divide-y divide-[#f5f5f5]">
-                    {list.open.map((task) => {
-                      const isOverdue =
-                        task.due && new Date(task.due) < new Date();
-                      return (
-                        <div
-                          key={task.id}
-                          className="px-5 py-3.5 flex items-start gap-3"
-                        >
-                          <div
-                            className={`w-4 h-4 rounded-full border-2 mt-0.5 shrink-0 ${
-                              isOverdue
-                                ? "border-orange-400"
-                                : "border-[#d1d1d6]"
-                            }`}
-                          />
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium">{task.title}</p>
-                            {task.due && (
-                              <p
-                                className={`text-[11px] mt-0.5 ${
-                                  isOverdue
-                                    ? "text-orange-500 font-medium"
-                                    : "text-[#86868b]"
-                                }`}
-                              >
-                                {isOverdue ? "Overdue · " : "Due "}
-                                {new Date(task.due).toLocaleDateString("en-US", {
-                                  month: "short",
-                                  day: "numeric",
-                                })}
-                              </p>
-                            )}
-                            {task.notes && (
-                              <p className="text-[11px] text-[#86868b] truncate mt-0.5">
-                                {task.notes}
-                              </p>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <p className="px-5 pb-5 text-[#86868b] text-sm">
-                    All tasks complete
-                  </p>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-        {/* ─── ANALYTICS TAB ─── */}
-        {tab === "analytics" && (
-          <div className="space-y-6">
-            {historyLoading && !history && (
-              <div className="bg-white rounded-2xl p-12 shadow-sm text-center">
-                <div className="w-8 h-8 border-2 border-[#0071e3] border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-                <p className="text-[#86868b] text-sm">Loading historical data (2020 - present)...</p>
-                <p className="text-[#86868b] text-xs mt-1">This may take a moment the first time</p>
-              </div>
-            )}
-
-            {history && (() => {
-              const { yearly } = history;
-              const currentYear = new Date().getFullYear();
-              const fullYears = yearly.filter((y) => y.year < currentYear);
-
-              const peakEmailYear = [...fullYears].sort((a, b) => (b.received + b.sent) - (a.received + a.sent))[0];
-              const peakMeetingYear = [...fullYears].sort((a, b) => b.meetings - a.meetings)[0];
-
-              // YoY for latest full year vs prior
-              const latestFull = fullYears[fullYears.length - 1];
-              const priorFull = fullYears[fullYears.length - 2];
-              const yoyEmail =
-                latestFull && priorFull && priorFull.received > 0
-                  ? Math.round(((latestFull.received - priorFull.received) / priorFull.received) * 100)
-                  : null;
-
-              // Averages based on full years only
-              const fullYearEmails = fullYears.reduce((s, y) => s + y.received + y.sent, 0);
-              const fullYearMeetings = fullYears.reduce((s, y) => s + y.meetings, 0);
-              const fullYearHours = fullYears.reduce((s, y) => s + y.meetingHours, 0);
-              const fullYearCount = Math.max(fullYears.length, 1);
-
-              // Recurring ratio across all full years
-              const totalRecurring = fullYears.reduce((s, y) => s + y.recurringMeetings, 0);
-              const totalMeetingsFull = fullYears.reduce((s, y) => s + y.meetings, 0);
-              const recurringPct = totalMeetingsFull > 0 ? Math.round((totalRecurring / totalMeetingsFull) * 100) : 0;
-
-              // Peak meeting hours year
-              const peakHoursYear = [...fullYears].sort((a, b) => b.meetingHours - a.meetingHours)[0];
-
-              return (
-                <>
-                  {/* KPIs */}
+          {/* ─── ANALYTICS TAB ─── */}
+          {tab === "analytics" && (
+            <motion.div
+              key="analytics"
+              variants={tabVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              transition={{ duration: 0.3 }}
+              className="space-y-6"
+            >
+              {historyLoading && !history && (
+                <div className="space-y-4">
                   <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                    <KpiCard
-                      label="Total Emails"
-                      value={history.totalEmails.toLocaleString()}
-                      sub="since 2020"
-                    />
-                    <KpiCard
-                      label="Total Meetings"
-                      value={history.totalMeetings.toLocaleString()}
-                      sub={`${history.totalMeetingHours.toLocaleString()}h total`}
-                    />
-                    <KpiCard
-                      label="Avg / Year"
-                      value={Math.round(fullYearEmails / fullYearCount).toLocaleString()}
-                      sub={`emails · ${Math.round(fullYearMeetings / fullYearCount).toLocaleString()} meetings`}
-                    />
-                    {yoyEmail !== null ? (
+                    <SkeletonCard /><SkeletonCard /><SkeletonCard /><SkeletonCard />
+                  </div>
+                  <SkeletonList rows={6} />
+                  <SkeletonList rows={6} />
+                </div>
+              )}
+
+              {history && (() => {
+                const { yearly } = history;
+                const currentYear = new Date().getFullYear();
+                const fullYears = yearly.filter((y) => y.year < currentYear);
+
+                const peakEmailYear = [...fullYears].sort((a, b) => (b.received + b.sent) - (a.received + a.sent))[0];
+                const peakMeetingYear = [...fullYears].sort((a, b) => b.meetings - a.meetings)[0];
+
+                const latestFull = fullYears[fullYears.length - 1];
+                const priorFull = fullYears[fullYears.length - 2];
+                const yoyEmail =
+                  latestFull && priorFull && priorFull.received > 0
+                    ? Math.round(((latestFull.received - priorFull.received) / priorFull.received) * 100)
+                    : null;
+
+                const fullYearEmails = fullYears.reduce((s, y) => s + y.received + y.sent, 0);
+                const fullYearMeetings = fullYears.reduce((s, y) => s + y.meetings, 0);
+                const fullYearHours = fullYears.reduce((s, y) => s + y.meetingHours, 0);
+                const fullYearCount = Math.max(fullYears.length, 1);
+
+                const totalRecurring = fullYears.reduce((s, y) => s + y.recurringMeetings, 0);
+                const totalMeetingsFull = fullYears.reduce((s, y) => s + y.meetings, 0);
+                const recurringPct = totalMeetingsFull > 0 ? Math.round((totalRecurring / totalMeetingsFull) * 100) : 0;
+
+                const peakHoursYear = [...fullYears].sort((a, b) => b.meetingHours - a.meetingHours)[0];
+
+                return (
+                  <>
+                    {/* KPIs */}
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 stagger">
                       <KpiCard
-                        label={`${latestFull.year} vs ${priorFull.year}`}
-                        value={`${yoyEmail > 0 ? "+" : ""}${yoyEmail}%`}
-                        sub="email volume change"
-                        accent={yoyEmail > 0 ? "text-emerald-500" : "text-red-500"}
+                        label="Total Emails"
+                        value={history.totalEmails}
+                        sub="since 2020"
+                        gradient="bg-gradient-to-br from-[#0071e3] to-[#5856d6]"
                       />
-                    ) : (
                       <KpiCard
-                        label="Peak Year"
-                        value={String(peakEmailYear?.year || "---")}
-                        sub={`${((peakEmailYear?.received || 0) + (peakEmailYear?.sent || 0)).toLocaleString()} emails`}
+                        label="Total Meetings"
+                        value={history.totalMeetings}
+                        sub={`${history.totalMeetingHours.toLocaleString()}h total`}
+                        gradient="bg-gradient-to-br from-[#ff9500] to-[#ff6b00]"
                       />
+                      <KpiCard
+                        label="Avg / Year"
+                        value={Math.round(fullYearEmails / fullYearCount).toLocaleString()}
+                        sub={`emails \u00b7 ${Math.round(fullYearMeetings / fullYearCount).toLocaleString()} meetings`}
+                      />
+                      {yoyEmail !== null ? (
+                        <KpiCard
+                          label={`${latestFull.year} vs ${priorFull.year}`}
+                          value={`${yoyEmail > 0 ? "+" : ""}${yoyEmail}%`}
+                          sub="email volume change"
+                          accent={yoyEmail > 0 ? "text-emerald-500" : "text-red-500"}
+                        />
+                      ) : (
+                        <KpiCard
+                          label="Peak Year"
+                          value={String(peakEmailYear?.year || "---")}
+                          sub={`${((peakEmailYear?.received || 0) + (peakEmailYear?.sent || 0)).toLocaleString()} emails`}
+                        />
+                      )}
+                    </div>
+
+                    {/* Calendar Heatmap */}
+                    {heatmap && (
+                      <div className="bg-white rounded-2xl p-5 shadow-sm card-hover">
+                        <p className="text-[13px] text-[#86868b] font-medium mb-4">
+                          Meeting Activity (Past 12 Months)
+                        </p>
+                        <CalendarHeatmap days={heatmap} />
+                      </div>
                     )}
-                  </div>
 
-                  {/* Email Volume by Year */}
-                  <div className="bg-white rounded-2xl p-5 shadow-sm">
-                    <p className="text-[13px] text-[#86868b] font-medium mb-4">
-                      Email Volume by Year
-                    </p>
-                    <ResponsiveContainer width="100%" height={300}>
-                      <BarChart data={yearly} barGap={4}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                        <XAxis
-                          dataKey="year"
-                          tick={{ fontSize: 13, fill: "#1d1d1f", fontWeight: 600 }}
-                          axisLine={false}
-                          tickLine={false}
-                        />
-                        <YAxis
-                          tick={{ fontSize: 12, fill: "#86868b" }}
-                          axisLine={false}
-                          tickLine={false}
-                          tickFormatter={(v) => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v}
-                        />
-                        <Tooltip
-                          contentStyle={{
-                            background: "#1d1d1f",
-                            border: "none",
-                            borderRadius: 10,
-                            color: "#fff",
-                            fontSize: 12,
-                          }}
-                          formatter={(value, name) => [Number(value).toLocaleString(), name]}
-                          labelFormatter={(label) => `Year ${label}`}
-                        />
-                        <Legend wrapperStyle={{ fontSize: 12 }} />
-                        <Bar
-                          dataKey="received"
-                          fill="#0071e3"
-                          radius={[6, 6, 0, 0]}
-                          maxBarSize={48}
-                          name="Received"
-                        />
-                        <Bar
-                          dataKey="sent"
-                          fill="#5ac8fa"
-                          radius={[6, 6, 0, 0]}
-                          maxBarSize={48}
-                          name="Sent"
-                        />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-
-                  {/* Meetings by Year: Recurring vs One-Off */}
-                  <div className="bg-white rounded-2xl p-5 shadow-sm">
-                    <p className="text-[13px] text-[#86868b] font-medium mb-4">
-                      Meetings by Year — Recurring vs One-Off
-                    </p>
-                    <ResponsiveContainer width="100%" height={300}>
-                      <BarChart data={yearly} barGap={4}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                        <XAxis
-                          dataKey="year"
-                          tick={{ fontSize: 13, fill: "#1d1d1f", fontWeight: 600 }}
-                          axisLine={false}
-                          tickLine={false}
-                        />
-                        <YAxis
-                          tick={{ fontSize: 12, fill: "#86868b" }}
-                          axisLine={false}
-                          tickLine={false}
-                        />
-                        <Tooltip
-                          contentStyle={{
-                            background: "#1d1d1f",
-                            border: "none",
-                            borderRadius: 10,
-                            color: "#fff",
-                            fontSize: 12,
-                          }}
-                          formatter={(value, name) => [Number(value).toLocaleString(), name]}
-                          labelFormatter={(label) => `Year ${label}`}
-                        />
-                        <Legend wrapperStyle={{ fontSize: 12 }} />
-                        <Bar
-                          dataKey="recurringMeetings"
-                          fill="#ff9500"
-                          maxBarSize={48}
-                          stackId="meetings"
-                          name="Recurring"
-                        />
-                        <Bar
-                          dataKey="oneOffMeetings"
-                          fill="#5856d6"
-                          radius={[6, 6, 0, 0]}
-                          maxBarSize={48}
-                          stackId="meetings"
-                          name="One-Off"
-                        />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-
-                  {/* Meeting Hours: Recurring vs One-Off */}
-                  <div className="bg-white rounded-2xl p-5 shadow-sm">
-                    <p className="text-[13px] text-[#86868b] font-medium mb-4">
-                      Meeting Hours by Year — Recurring vs One-Off
-                    </p>
-                    <ResponsiveContainer width="100%" height={300}>
-                      <BarChart data={yearly} barGap={4}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                        <XAxis
-                          dataKey="year"
-                          tick={{ fontSize: 13, fill: "#1d1d1f", fontWeight: 600 }}
-                          axisLine={false}
-                          tickLine={false}
-                        />
-                        <YAxis
-                          tick={{ fontSize: 12, fill: "#86868b" }}
-                          axisLine={false}
-                          tickLine={false}
-                          tickFormatter={(v) => `${v}h`}
-                        />
-                        <Tooltip
-                          contentStyle={{
-                            background: "#1d1d1f",
-                            border: "none",
-                            borderRadius: 10,
-                            color: "#fff",
-                            fontSize: 12,
-                          }}
-                          formatter={(value, name) => [`${Number(value).toLocaleString()}h`, name]}
-                          labelFormatter={(label) => `Year ${label}`}
-                        />
-                        <Legend wrapperStyle={{ fontSize: 12 }} />
-                        <Bar
-                          dataKey="recurringHours"
-                          fill="#ff9500"
-                          maxBarSize={48}
-                          stackId="hours"
-                          name="Recurring"
-                        />
-                        <Bar
-                          dataKey="oneOffHours"
-                          fill="#5856d6"
-                          radius={[6, 6, 0, 0]}
-                          maxBarSize={48}
-                          stackId="hours"
-                          name="One-Off"
-                        />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-
-                  {/* Year-over-Year Table */}
-                  <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
-                    <div className="px-5 pt-5 pb-3">
-                      <p className="text-[13px] text-[#86868b] font-medium">
-                        Year-over-Year Breakdown
+                    {/* Email Volume by Year */}
+                    <div className="bg-white rounded-2xl p-5 shadow-sm card-hover">
+                      <p className="text-[13px] text-[#86868b] font-medium mb-4">
+                        Email Volume by Year
                       </p>
+                      <ResponsiveContainer width="100%" height={300}>
+                        <BarChart data={yearly} barGap={4}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                          <XAxis
+                            dataKey="year"
+                            tick={{ fontSize: 13, fill: "#1d1d1f", fontWeight: 600 }}
+                            axisLine={false}
+                            tickLine={false}
+                          />
+                          <YAxis
+                            tick={{ fontSize: 12, fill: "#86868b" }}
+                            axisLine={false}
+                            tickLine={false}
+                            tickFormatter={(v) => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v}
+                          />
+                          <Tooltip contentStyle={tooltipStyle}
+                            formatter={(value, name) => [Number(value).toLocaleString(), name]}
+                            labelFormatter={(label) => `Year ${label}`}
+                          />
+                          <Legend wrapperStyle={{ fontSize: 12 }} />
+                          <Bar
+                            dataKey="received"
+                            fill="#0071e3"
+                            radius={[6, 6, 0, 0]}
+                            maxBarSize={48}
+                            name="Received"
+                          />
+                          <Bar
+                            dataKey="sent"
+                            fill="#5ac8fa"
+                            radius={[6, 6, 0, 0]}
+                            maxBarSize={48}
+                            name="Sent"
+                          />
+                        </BarChart>
+                      </ResponsiveContainer>
                     </div>
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="border-b border-[#f0f0f0]">
-                            <th className="text-left px-5 py-2.5 text-[11px] text-[#86868b] font-semibold uppercase tracking-wider">Year</th>
-                            <th className="text-right px-5 py-2.5 text-[11px] text-[#86868b] font-semibold uppercase tracking-wider">Received</th>
-                            <th className="text-right px-5 py-2.5 text-[11px] text-[#86868b] font-semibold uppercase tracking-wider">Sent</th>
-                            <th className="text-right px-5 py-2.5 text-[11px] text-[#86868b] font-semibold uppercase tracking-wider">Recurring</th>
-                            <th className="text-right px-5 py-2.5 text-[11px] text-[#86868b] font-semibold uppercase tracking-wider">One-Off</th>
-                            <th className="text-right px-5 py-2.5 text-[11px] text-[#86868b] font-semibold uppercase tracking-wider">Total Mtgs</th>
-                            <th className="text-right px-5 py-2.5 text-[11px] text-[#86868b] font-semibold uppercase tracking-wider">Hours</th>
-                            <th className="text-right px-5 py-2.5 text-[11px] text-[#86868b] font-semibold uppercase tracking-wider">Email YoY</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {yearly.map((y, i) => {
-                            const prev = i > 0 ? yearly[i - 1] : null;
-                            const emailChange =
-                              prev && prev.received > 0
-                                ? Math.round(((y.received - prev.received) / prev.received) * 100)
-                                : null;
-                            return (
-                              <tr key={y.year} className="border-b border-[#f5f5f5] last:border-0">
-                                <td className="px-5 py-3 font-semibold">
-                                  {y.year}
-                                  {y.year === currentYear && (
-                                    <span className="text-[10px] text-[#86868b] font-normal ml-1">YTD</span>
-                                  )}
-                                </td>
-                                <td className="px-5 py-3 text-right tabular-nums">{y.received.toLocaleString()}</td>
-                                <td className="px-5 py-3 text-right tabular-nums">{y.sent.toLocaleString()}</td>
-                                <td className="px-5 py-3 text-right tabular-nums">{y.recurringMeetings.toLocaleString()}</td>
-                                <td className="px-5 py-3 text-right tabular-nums">{y.oneOffMeetings.toLocaleString()}</td>
-                                <td className="px-5 py-3 text-right tabular-nums">{y.meetings.toLocaleString()}</td>
-                                <td className="px-5 py-3 text-right tabular-nums">{y.meetingHours.toLocaleString()}h</td>
-                                <td className="px-5 py-3 text-right">
-                                  {emailChange !== null ? (
-                                    <span
-                                      className={`font-medium ${
-                                        emailChange >= 0 ? "text-emerald-500" : "text-red-500"
-                                      }`}
-                                    >
-                                      {emailChange > 0 ? "+" : ""}{emailChange}%
-                                    </span>
-                                  ) : (
-                                    <span className="text-[#d1d1d6]">---</span>
-                                  )}
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
 
-                  {/* Insights */}
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                    <div className="bg-white rounded-2xl p-5 shadow-sm">
-                      <p className="text-[13px] text-[#86868b] font-medium mb-3">Peaks</p>
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <p className="text-sm font-medium">Busiest Email Year</p>
-                            <p className="text-xs text-[#86868b]">{peakEmailYear?.year}</p>
-                          </div>
-                          <p className="text-lg font-bold text-[#0071e3]">
-                            {((peakEmailYear?.received || 0) + (peakEmailYear?.sent || 0)).toLocaleString()}
-                          </p>
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <p className="text-sm font-medium">Most Meetings</p>
-                            <p className="text-xs text-[#86868b]">{peakMeetingYear?.year}</p>
-                          </div>
-                          <p className="text-lg font-bold text-[#ff9500]">
-                            {peakMeetingYear?.meetings.toLocaleString()}
-                          </p>
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <p className="text-sm font-medium">Most Meeting Hours</p>
-                            <p className="text-xs text-[#86868b]">{peakHoursYear?.year}</p>
-                          </div>
-                          <p className="text-lg font-bold text-[#5856d6]">
-                            {peakHoursYear?.meetingHours.toLocaleString()}h
-                          </p>
-                        </div>
+                    {/* Meetings by Year */}
+                    <div className="bg-white rounded-2xl p-5 shadow-sm card-hover">
+                      <p className="text-[13px] text-[#86868b] font-medium mb-4">
+                        Meetings by Year — Recurring vs One-Off
+                      </p>
+                      <ResponsiveContainer width="100%" height={300}>
+                        <BarChart data={yearly} barGap={4}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                          <XAxis
+                            dataKey="year"
+                            tick={{ fontSize: 13, fill: "#1d1d1f", fontWeight: 600 }}
+                            axisLine={false}
+                            tickLine={false}
+                          />
+                          <YAxis
+                            tick={{ fontSize: 12, fill: "#86868b" }}
+                            axisLine={false}
+                            tickLine={false}
+                          />
+                          <Tooltip contentStyle={tooltipStyle}
+                            formatter={(value, name) => [Number(value).toLocaleString(), name]}
+                            labelFormatter={(label) => `Year ${label}`}
+                          />
+                          <Legend wrapperStyle={{ fontSize: 12 }} />
+                          <Bar dataKey="recurringMeetings" fill="#ff9500" maxBarSize={48} stackId="meetings" name="Recurring" />
+                          <Bar dataKey="oneOffMeetings" fill="#5856d6" radius={[6, 6, 0, 0]} maxBarSize={48} stackId="meetings" name="One-Off" />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+
+                    {/* Meeting Hours by Year */}
+                    <div className="bg-white rounded-2xl p-5 shadow-sm card-hover">
+                      <p className="text-[13px] text-[#86868b] font-medium mb-4">
+                        Meeting Hours by Year — Recurring vs One-Off
+                      </p>
+                      <ResponsiveContainer width="100%" height={300}>
+                        <BarChart data={yearly} barGap={4}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                          <XAxis
+                            dataKey="year"
+                            tick={{ fontSize: 13, fill: "#1d1d1f", fontWeight: 600 }}
+                            axisLine={false}
+                            tickLine={false}
+                          />
+                          <YAxis
+                            tick={{ fontSize: 12, fill: "#86868b" }}
+                            axisLine={false}
+                            tickLine={false}
+                            tickFormatter={(v) => `${v}h`}
+                          />
+                          <Tooltip contentStyle={tooltipStyle}
+                            formatter={(value, name) => [`${Number(value).toLocaleString()}h`, name]}
+                            labelFormatter={(label) => `Year ${label}`}
+                          />
+                          <Legend wrapperStyle={{ fontSize: 12 }} />
+                          <Bar dataKey="recurringHours" fill="#ff9500" maxBarSize={48} stackId="hours" name="Recurring" />
+                          <Bar dataKey="oneOffHours" fill="#5856d6" radius={[6, 6, 0, 0]} maxBarSize={48} stackId="hours" name="One-Off" />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+
+                    {/* Year-over-Year Table */}
+                    <div className="bg-white rounded-2xl shadow-sm overflow-hidden card-hover">
+                      <div className="px-5 pt-5 pb-3">
+                        <p className="text-[13px] text-[#86868b] font-medium">
+                          Year-over-Year Breakdown
+                        </p>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b border-[#f0f0f0]">
+                              <th className="text-left px-5 py-2.5 text-[11px] text-[#86868b] font-semibold uppercase tracking-wider">Year</th>
+                              <th className="text-right px-5 py-2.5 text-[11px] text-[#86868b] font-semibold uppercase tracking-wider">Received</th>
+                              <th className="text-right px-5 py-2.5 text-[11px] text-[#86868b] font-semibold uppercase tracking-wider">Sent</th>
+                              <th className="text-right px-5 py-2.5 text-[11px] text-[#86868b] font-semibold uppercase tracking-wider">Recurring</th>
+                              <th className="text-right px-5 py-2.5 text-[11px] text-[#86868b] font-semibold uppercase tracking-wider">One-Off</th>
+                              <th className="text-right px-5 py-2.5 text-[11px] text-[#86868b] font-semibold uppercase tracking-wider">Total Mtgs</th>
+                              <th className="text-right px-5 py-2.5 text-[11px] text-[#86868b] font-semibold uppercase tracking-wider">Hours</th>
+                              <th className="text-right px-5 py-2.5 text-[11px] text-[#86868b] font-semibold uppercase tracking-wider">Email YoY</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {yearly.map((y, i) => {
+                              const prev = i > 0 ? yearly[i - 1] : null;
+                              const emailChange =
+                                prev && prev.received > 0
+                                  ? Math.round(((y.received - prev.received) / prev.received) * 100)
+                                  : null;
+                              return (
+                                <tr key={y.year} className="border-b border-[#f5f5f5] last:border-0 hover:bg-[#f9f9f9] transition-colors">
+                                  <td className="px-5 py-3 font-semibold">
+                                    {y.year}
+                                    {y.year === currentYear && (
+                                      <span className="text-[10px] text-[#86868b] font-normal ml-1">YTD</span>
+                                    )}
+                                  </td>
+                                  <td className="px-5 py-3 text-right tabular-nums">{y.received.toLocaleString()}</td>
+                                  <td className="px-5 py-3 text-right tabular-nums">{y.sent.toLocaleString()}</td>
+                                  <td className="px-5 py-3 text-right tabular-nums">{y.recurringMeetings.toLocaleString()}</td>
+                                  <td className="px-5 py-3 text-right tabular-nums">{y.oneOffMeetings.toLocaleString()}</td>
+                                  <td className="px-5 py-3 text-right tabular-nums">{y.meetings.toLocaleString()}</td>
+                                  <td className="px-5 py-3 text-right tabular-nums">{y.meetingHours.toLocaleString()}h</td>
+                                  <td className="px-5 py-3 text-right">
+                                    {emailChange !== null ? (
+                                      <span
+                                        className={`font-medium ${
+                                          emailChange >= 0 ? "text-emerald-500" : "text-red-500"
+                                        }`}
+                                      >
+                                        {emailChange > 0 ? "+" : ""}{emailChange}%
+                                      </span>
+                                    ) : (
+                                      <span className="text-[#d1d1d6]">---</span>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
                       </div>
                     </div>
 
-                    <div className="bg-white rounded-2xl p-5 shadow-sm">
-                      <p className="text-[13px] text-[#86868b] font-medium mb-3">Averages</p>
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between">
-                          <p className="text-sm font-medium">Emails per Year</p>
-                          <p className="text-lg font-bold">
-                            {Math.round(fullYearEmails / fullYearCount).toLocaleString()}
-                          </p>
+                    {/* Insights */}
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                      <div className="bg-white rounded-2xl p-5 shadow-sm card-hover">
+                        <p className="text-[13px] text-[#86868b] font-medium mb-3">Peaks</p>
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <p className="text-sm font-medium">Busiest Email Year</p>
+                              <p className="text-xs text-[#86868b]">{peakEmailYear?.year}</p>
+                            </div>
+                            <p className="text-lg font-bold gradient-text">
+                              {((peakEmailYear?.received || 0) + (peakEmailYear?.sent || 0)).toLocaleString()}
+                            </p>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <p className="text-sm font-medium">Most Meetings</p>
+                              <p className="text-xs text-[#86868b]">{peakMeetingYear?.year}</p>
+                            </div>
+                            <p className="text-lg font-bold text-[#ff9500]">
+                              {peakMeetingYear?.meetings.toLocaleString()}
+                            </p>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <p className="text-sm font-medium">Most Meeting Hours</p>
+                              <p className="text-xs text-[#86868b]">{peakHoursYear?.year}</p>
+                            </div>
+                            <p className="text-lg font-bold text-[#5856d6]">
+                              {peakHoursYear?.meetingHours.toLocaleString()}h
+                            </p>
+                          </div>
                         </div>
-                        <div className="flex items-center justify-between">
-                          <p className="text-sm font-medium">Meeting Hours per Year</p>
-                          <p className="text-lg font-bold">
-                            {Math.round(fullYearHours / fullYearCount).toLocaleString()}h
-                          </p>
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <p className="text-sm font-medium">Recurring Meeting %</p>
-                          <p className="text-lg font-bold text-[#ff9500]">
-                            {recurringPct}%
-                          </p>
+                      </div>
+
+                      <div className="bg-white rounded-2xl p-5 shadow-sm card-hover">
+                        <p className="text-[13px] text-[#86868b] font-medium mb-3">Averages</p>
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between">
+                            <p className="text-sm font-medium">Emails per Year</p>
+                            <p className="text-lg font-bold">
+                              {Math.round(fullYearEmails / fullYearCount).toLocaleString()}
+                            </p>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <p className="text-sm font-medium">Meeting Hours per Year</p>
+                            <p className="text-lg font-bold">
+                              {Math.round(fullYearHours / fullYearCount).toLocaleString()}h
+                            </p>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <p className="text-sm font-medium">Recurring Meeting %</p>
+                            <p className="text-lg font-bold text-[#ff9500]">
+                              {recurringPct}%
+                            </p>
+                          </div>
                         </div>
                       </div>
                     </div>
-                  </div>
-                </>
-              );
-            })()}
-          </div>
-        )}
+                  </>
+                );
+              })()}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* Footer */}
       <footer className="mt-16 border-t border-[#e5e5e5]/60 py-6">
         <div className="max-w-6xl mx-auto px-6 flex items-center justify-between text-[11px] text-[#86868b]">
           <p>
-            Auto-refreshes every 5 min · Last updated{" "}
+            Auto-refreshes every 5 min \u00b7 Last updated{" "}
             {new Date(data.generatedAt).toLocaleTimeString("en-US", {
               hour: "numeric",
               minute: "2-digit",

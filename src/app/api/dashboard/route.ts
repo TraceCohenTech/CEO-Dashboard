@@ -262,6 +262,80 @@ async function getDriveStats() {
   };
 }
 
+async function getTopContacts() {
+  const gmail = getGmail();
+  const list = await gmail.users.messages.list({
+    userId: "me",
+    maxResults: 100,
+    q: "is:inbox",
+    fields: "messages(id)",
+  });
+  const messages = list.data.messages || [];
+  const froms = await Promise.all(
+    messages.slice(0, 40).map(async (msg) => {
+      const detail = await gmail.users.messages.get({
+        userId: "me",
+        id: msg.id!,
+        format: "metadata",
+        metadataHeaders: ["From"],
+      });
+      return detail.data.payload?.headers?.find((h) => h.name === "From")?.value || "";
+    })
+  );
+
+  const counts: Record<string, { name: string; email: string; count: number }> = {};
+  for (const from of froms) {
+    const emailMatch = from.match(/<([^>]+)>/);
+    const addr = emailMatch ? emailMatch[1].toLowerCase() : from.toLowerCase();
+    const nameMatch = from.match(/^"?([^"<]+)"?\s*</);
+    const name = nameMatch ? nameMatch[1].trim() : addr.split("@")[0];
+    if (!counts[addr]) counts[addr] = { name, email: addr, count: 0 };
+    counts[addr].count++;
+  }
+
+  return Object.values(counts)
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 8);
+}
+
+async function getLastWeekStats() {
+  const gmail = getGmail();
+  const calendar = getCalendar();
+  const now = new Date();
+
+  const lwEnd = new Date(now);
+  lwEnd.setDate(lwEnd.getDate() - 7);
+  const lwStart = new Date(lwEnd);
+  lwStart.setDate(lwStart.getDate() - 7);
+
+  const lwStartStr = `${lwStart.getFullYear()}/${String(lwStart.getMonth() + 1).padStart(2, "0")}/${String(lwStart.getDate()).padStart(2, "0")}`;
+  const lwEndStr = `${lwEnd.getFullYear()}/${String(lwEnd.getMonth() + 1).padStart(2, "0")}/${String(lwEnd.getDate()).padStart(2, "0")}`;
+
+  const [received, calRes] = await Promise.all([
+    countMessages(gmail, `after:${lwStartStr} before:${lwEndStr}`),
+    calendar.events.list({
+      calendarId: "primary",
+      timeMin: lwStart.toISOString(),
+      timeMax: lwEnd.toISOString(),
+      singleEvents: true,
+      maxResults: 200,
+      fields: "items(start,end)",
+    }),
+  ]);
+
+  const events = calRes.data.items || [];
+  const meetingMins = events.reduce((total, e) => {
+    if (!e.start?.dateTime || !e.end?.dateTime) return total;
+    return total + (new Date(e.end.dateTime).getTime() - new Date(e.start.dateTime).getTime()) / 60000;
+  }, 0);
+
+  return {
+    received,
+    meetings: events.filter((e) => e.start?.dateTime).length,
+    meetingHours: Math.round((meetingMins / 60) * 10) / 10,
+  };
+}
+
 async function getTaskLists() {
   const tasks = getTasks();
   const res = await tasks.tasklists.list({ maxResults: 10 });
@@ -326,6 +400,8 @@ export async function GET() {
       driveStats,
       taskLists,
       emailCategories,
+      topContacts,
+      lastWeek,
     ] = await Promise.all([
       getTodayEvents(),
       getWeekEvents(),
@@ -338,6 +414,8 @@ export async function GET() {
       getDriveStats(),
       getTaskLists(),
       getEmailCategories(),
+      getTopContacts(),
+      getLastWeekStats(),
     ]);
 
     // Calculate meeting hours this week
@@ -371,10 +449,25 @@ export async function GET() {
       }
     });
 
+    const WORK_HOURS = 9; // 9am-6pm
     const weeklyMeetingData = days.map((day) => ({
       day,
       meetings: meetingsByDay[day] || 0,
       hours: Math.round((meetingHoursByDay[day] || 0) * 10) / 10,
+      focusHours: Math.round((WORK_HOURS - (meetingHoursByDay[day] || 0)) * 10) / 10,
+    }));
+
+    // Busiest hours of the day
+    const hourCounts: Record<number, number> = {};
+    weekEvents.forEach((event) => {
+      if (!event.start?.dateTime) return;
+      const hour = new Date(event.start.dateTime).getHours();
+      hourCounts[hour] = (hourCounts[hour] || 0) + 1;
+    });
+    const busiestHours = Array.from({ length: 12 }, (_, i) => i + 7).map((hour) => ({
+      hour,
+      label: `${hour > 12 ? hour - 12 : hour}${hour >= 12 ? "p" : "a"}`,
+      count: hourCounts[hour] || 0,
     }));
 
     // Total open tasks
@@ -428,6 +521,9 @@ export async function GET() {
         overdue: overdueTasks.length,
       },
       emailCategories,
+      topContacts,
+      lastWeek,
+      busiestHours,
       generatedAt: new Date().toISOString(),
     });
   } catch (error: unknown) {
