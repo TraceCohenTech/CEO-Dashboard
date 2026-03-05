@@ -99,6 +99,23 @@ interface DashboardData {
     totalCompleted: number;
     overdue: number;
   };
+  emailCategories: {
+    categories: {
+      key: string;
+      label: string;
+      count: number;
+      previews: {
+        id: string;
+        from: string;
+        subject: string;
+        date: string;
+        snippet: string;
+      }[];
+    }[];
+    otherCount: number;
+    totalInbox: number;
+    period: string;
+  };
   generatedAt: string;
 }
 
@@ -247,7 +264,7 @@ export default function Dashboard() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<"overview" | "calendar" | "email" | "drive" | "tasks" | "analytics">("overview");
+  const [tab, setTab] = useState<"overview" | "calendar" | "email" | "inbox" | "drive" | "tasks" | "analytics">("overview");
   const [history, setHistory] = useState<HistoryData | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
 
@@ -320,6 +337,7 @@ export default function Dashboard() {
     { id: "overview" as const, label: "Overview" },
     { id: "calendar" as const, label: "Calendar" },
     { id: "email" as const, label: "Email" },
+    { id: "inbox" as const, label: "Inbox Intel" },
     { id: "drive" as const, label: "Drive" },
     { id: "tasks" as const, label: "Tasks" },
     { id: "analytics" as const, label: "Analytics" },
@@ -881,6 +899,149 @@ export default function Dashboard() {
                 ))}
               </div>
             </div>
+          </div>
+        )}
+
+        {/* ─── INBOX INTEL TAB ─── */}
+        {tab === "inbox" && (
+          <div className="space-y-6">
+            {/* Category breakdown bar */}
+            {(() => {
+              const cats = data.emailCategories;
+              const total = cats.totalInbox || 1;
+              const colors: Record<string, string> = {
+                dealFlow: "bg-[#0071e3]",
+                intros: "bg-[#5856d6]",
+                portfolio: "bg-emerald-500",
+                newsletters: "bg-[#86868b]",
+              };
+              const dotColors: Record<string, string> = {
+                dealFlow: "bg-[#0071e3]",
+                intros: "bg-[#5856d6]",
+                portfolio: "bg-emerald-500",
+                newsletters: "bg-[#86868b]",
+              };
+
+              return (
+                <>
+                  {/* Summary cards */}
+                  <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+                    {cats.categories.map((cat) => (
+                      <KpiCard
+                        key={cat.key}
+                        label={cat.label}
+                        value={cat.count}
+                        sub={`${Math.round((cat.count / total) * 100)}% of inbox`}
+                      />
+                    ))}
+                    <KpiCard
+                      label="Direct / Other"
+                      value={cats.otherCount}
+                      sub={`${Math.round((cats.otherCount / total) * 100)}% of inbox`}
+                    />
+                  </div>
+
+                  {/* Visual breakdown bar */}
+                  <div className="bg-white rounded-2xl p-5 shadow-sm">
+                    <div className="flex items-center justify-between mb-3">
+                      <p className="text-[13px] text-[#86868b] font-medium">
+                        Inbox Breakdown
+                      </p>
+                      <p className="text-[11px] text-[#86868b]">{cats.period}</p>
+                    </div>
+                    <div className="flex rounded-lg overflow-hidden h-8">
+                      {cats.categories.map((cat) => {
+                        const pct = (cat.count / total) * 100;
+                        if (pct < 1) return null;
+                        return (
+                          <div
+                            key={cat.key}
+                            className={`${colors[cat.key] || "bg-gray-400"} relative group`}
+                            style={{ width: `${pct}%` }}
+                            title={`${cat.label}: ${cat.count}`}
+                          >
+                            {pct > 8 && (
+                              <span className="absolute inset-0 flex items-center justify-center text-white text-[11px] font-medium">
+                                {Math.round(pct)}%
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })}
+                      {cats.otherCount > 0 && (
+                        <div
+                          className="bg-[#e5e5e5] relative"
+                          style={{ width: `${(cats.otherCount / total) * 100}%` }}
+                          title={`Other: ${cats.otherCount}`}
+                        >
+                          {(cats.otherCount / total) * 100 > 8 && (
+                            <span className="absolute inset-0 flex items-center justify-center text-[#86868b] text-[11px] font-medium">
+                              {Math.round((cats.otherCount / total) * 100)}%
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-4 mt-3">
+                      {cats.categories.map((cat) => (
+                        <div key={cat.key} className="flex items-center gap-1.5">
+                          <div className={`w-2.5 h-2.5 rounded-full ${dotColors[cat.key] || "bg-gray-400"}`} />
+                          <span className="text-[11px] text-[#86868b]">{cat.label}</span>
+                        </div>
+                      ))}
+                      <div className="flex items-center gap-1.5">
+                        <div className="w-2.5 h-2.5 rounded-full bg-[#e5e5e5]" />
+                        <span className="text-[11px] text-[#86868b]">Other</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Category detail cards */}
+                  {cats.categories.map((cat) => (
+                    <div key={cat.key} className="bg-white rounded-2xl shadow-sm overflow-hidden">
+                      <div className="px-5 pt-5 pb-3 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <div className={`w-2.5 h-2.5 rounded-full ${dotColors[cat.key] || "bg-gray-400"}`} />
+                          <p className="text-[13px] font-semibold">{cat.label}</p>
+                        </div>
+                        <span className="text-[11px] text-[#86868b]">
+                          {cat.count} emails · {cats.period.toLowerCase()}
+                        </span>
+                      </div>
+                      {cat.previews.length > 0 ? (
+                        <div className="divide-y divide-[#f5f5f5]">
+                          {cat.previews.map((email) => (
+                            <div
+                              key={email.id}
+                              className="px-5 py-3 hover:bg-[#f9f9f9] transition-colors"
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <p className="text-sm font-medium truncate">
+                                  {parseFromName(email.from)}
+                                </p>
+                                <span className="text-[11px] text-[#86868b] shrink-0">
+                                  {formatRelative(email.date)}
+                                </span>
+                              </div>
+                              <p className="text-[13px] text-[#1d1d1f]/70 truncate mt-0.5">
+                                {email.subject || "(no subject)"}
+                              </p>
+                              <p className="text-xs text-[#86868b] truncate mt-0.5">
+                                {email.snippet}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="px-5 pb-5 text-[#86868b] text-sm">
+                          No emails in this category
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </>
+              );
+            })()}
           </div>
         )}
 

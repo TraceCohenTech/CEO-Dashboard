@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getCalendar, getDrive, getGmail, getTasks } from "@/lib/google";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 async function getTodayEvents() {
   const calendar = getCalendar();
@@ -106,6 +107,81 @@ async function getEmailStats() {
   );
 
   return dailyCounts;
+}
+
+const EMAIL_CATEGORIES = {
+  dealFlow: {
+    label: "Deal Flow",
+    query: 'subject:(pitch OR deck OR raising OR fundraise OR "seed round" OR "pre-seed" OR "series a" OR "series b" OR startup OR "looking for funding" OR "investment opportunity")',
+  },
+  intros: {
+    label: "Intros",
+    query: 'subject:(intro OR introduction OR "want to connect" OR "double opt" OR "warm intro" OR "connecting you")',
+  },
+  portfolio: {
+    label: "Portfolio Updates",
+    query: 'subject:("investor update" OR "monthly update" OR "quarterly update" OR "portfolio update" OR "board deck")',
+  },
+  newsletters: {
+    label: "Newsletters",
+    query: "has:unsubscribe -subject:(intro OR pitch OR deck OR raising)",
+  },
+};
+
+async function getEmailCategories() {
+  const gmail = getGmail();
+
+  const now = new Date();
+  const thirtyDaysAgo = new Date(now);
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+  const dateFilter = `after:${thirtyDaysAgo.getFullYear()}/${String(thirtyDaysAgo.getMonth() + 1).padStart(2, "0")}/${String(thirtyDaysAgo.getDate()).padStart(2, "0")}`;
+
+  const categories = await Promise.all(
+    Object.entries(EMAIL_CATEGORIES).map(async ([key, { label, query }]) => {
+      const fullQuery = `${query} ${dateFilter}`;
+      const count = await countMessages(gmail, fullQuery);
+
+      // Fetch a few recent ones for preview
+      const list = await gmail.users.messages.list({
+        userId: "me",
+        q: fullQuery,
+        maxResults: 5,
+      });
+
+      const messages = list.data.messages || [];
+      const previews = await Promise.all(
+        messages.slice(0, 5).map(async (msg) => {
+          const detail = await gmail.users.messages.get({
+            userId: "me",
+            id: msg.id!,
+            format: "metadata",
+            metadataHeaders: ["From", "Subject", "Date"],
+          });
+          const headers = detail.data.payload?.headers || [];
+          return {
+            id: msg.id,
+            from: headers.find((h) => h.name === "From")?.value || "",
+            subject: headers.find((h) => h.name === "Subject")?.value || "",
+            date: headers.find((h) => h.name === "Date")?.value || "",
+            snippet: detail.data.snippet || "",
+          };
+        })
+      );
+
+      return { key, label, count, previews };
+    })
+  );
+
+  // Count total inbox last 30 days to calculate "Other/Direct"
+  const totalInbox = await countMessages(gmail, `in:inbox ${dateFilter}`);
+  const categorizedTotal = categories.reduce((s, c) => s + c.count, 0);
+
+  return {
+    categories,
+    otherCount: Math.max(0, totalInbox - categorizedTotal),
+    totalInbox,
+    period: "Last 30 days",
+  };
 }
 
 async function getRecentEmails() {
@@ -249,6 +325,7 @@ export async function GET() {
       files,
       driveStats,
       taskLists,
+      emailCategories,
     ] = await Promise.all([
       getTodayEvents(),
       getWeekEvents(),
@@ -260,6 +337,7 @@ export async function GET() {
       getRecentFiles(),
       getDriveStats(),
       getTaskLists(),
+      getEmailCategories(),
     ]);
 
     // Calculate meeting hours this week
@@ -349,6 +427,7 @@ export async function GET() {
         totalCompleted: totalCompletedTasks,
         overdue: overdueTasks.length,
       },
+      emailCategories,
       generatedAt: new Date().toISOString(),
     });
   } catch (error: unknown) {
