@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import {
+  BarChart,
   Bar,
   XAxis,
   YAxis,
@@ -11,9 +12,6 @@ import {
   Area,
   CartesianGrid,
   Legend,
-  ComposedChart,
-  Line,
-  BarChart,
 } from "recharts";
 
 /* ─── Types ─── */
@@ -1291,7 +1289,7 @@ export default function Dashboard() {
                       Email Volume by Year
                     </p>
                     <ResponsiveContainer width="100%" height={300}>
-                      <ComposedChart data={yearly.map((y) => ({ ...y, totalEmails: y.received + y.sent }))} barGap={4}>
+                      <BarChart data={yearly} barGap={4}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                         <XAxis
                           dataKey="year"
@@ -1331,15 +1329,7 @@ export default function Dashboard() {
                           maxBarSize={48}
                           name="Sent"
                         />
-                        <Line
-                          type="monotone"
-                          dataKey="totalEmails"
-                          stroke="#1d1d1f"
-                          strokeWidth={2}
-                          dot={{ r: 4, fill: "#1d1d1f" }}
-                          name="Total"
-                        />
-                      </ComposedChart>
+                      </BarChart>
                     </ResponsiveContainer>
                   </div>
 
@@ -1349,7 +1339,7 @@ export default function Dashboard() {
                       Meetings by Year — Recurring vs One-Off
                     </p>
                     <ResponsiveContainer width="100%" height={300}>
-                      <ComposedChart data={yearly} barGap={4}>
+                      <BarChart data={yearly} barGap={4}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                         <XAxis
                           dataKey="year"
@@ -1389,15 +1379,7 @@ export default function Dashboard() {
                           stackId="meetings"
                           name="One-Off"
                         />
-                        <Line
-                          type="monotone"
-                          dataKey="meetings"
-                          stroke="#1d1d1f"
-                          strokeWidth={2}
-                          dot={{ r: 4, fill: "#1d1d1f" }}
-                          name="Total"
-                        />
-                      </ComposedChart>
+                      </BarChart>
                     </ResponsiveContainer>
                   </div>
 
@@ -1407,7 +1389,7 @@ export default function Dashboard() {
                       Meeting Hours by Year — Recurring vs One-Off
                     </p>
                     <ResponsiveContainer width="100%" height={300}>
-                      <ComposedChart data={yearly} barGap={4}>
+                      <BarChart data={yearly} barGap={4}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                         <XAxis
                           dataKey="year"
@@ -1448,15 +1430,7 @@ export default function Dashboard() {
                           stackId="hours"
                           name="One-Off"
                         />
-                        <Line
-                          type="monotone"
-                          dataKey="meetingHours"
-                          stroke="#1d1d1f"
-                          strokeWidth={2}
-                          dot={{ r: 4, fill: "#1d1d1f" }}
-                          name="Total"
-                        />
-                      </ComposedChart>
+                      </BarChart>
                     </ResponsiveContainer>
                   </div>
 
