@@ -11,6 +11,10 @@ import {
   AreaChart,
   Area,
   CartesianGrid,
+  LineChart,
+  Line,
+  Legend,
+  ComposedChart,
 } from "recharts";
 
 /* ─── Types ─── */
@@ -96,6 +100,34 @@ interface DashboardData {
     overdue: number;
   };
   generatedAt: string;
+}
+
+interface HistoryMonth {
+  year: number;
+  month: number;
+  label: string;
+  received: number;
+  sent: number;
+  meetings: number;
+  meetingHours: number;
+}
+
+interface HistoryYear {
+  year: number;
+  received: number;
+  sent: number;
+  meetings: number;
+  meetingHours: number;
+}
+
+interface HistoryData {
+  monthly: HistoryMonth[];
+  yearly: HistoryYear[];
+  totalEmails: number;
+  totalMeetings: number;
+  totalMeetingHours: number;
+  periodStart: string;
+  periodEnd: string;
 }
 
 /* ─── Helpers ─── */
@@ -228,7 +260,10 @@ export default function Dashboard() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<"overview" | "calendar" | "email" | "drive" | "tasks">("overview");
+  const [tab, setTab] = useState<"overview" | "calendar" | "email" | "drive" | "tasks" | "analytics">("overview");
+  const [history, setHistory] = useState<HistoryData | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyYear, setHistoryYear] = useState<number | "all">("all");
 
   const fetchData = useCallback(() => {
     setLoading(true);
@@ -244,9 +279,21 @@ export default function Dashboard() {
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 5 * 60 * 1000); // Auto-refresh every 5 min
+    const interval = setInterval(fetchData, 5 * 60 * 1000);
     return () => clearInterval(interval);
   }, [fetchData]);
+
+  useEffect(() => {
+    if (tab === "analytics" && !history && !historyLoading) {
+      setHistoryLoading(true);
+      fetch("/api/history")
+        .then((r) => r.json())
+        .then((d) => {
+          if (!d.error) setHistory(d);
+        })
+        .finally(() => setHistoryLoading(false));
+    }
+  }, [tab, history, historyLoading]);
 
   if (loading && !data) {
     return (
@@ -289,6 +336,7 @@ export default function Dashboard() {
     { id: "email" as const, label: "Email" },
     { id: "drive" as const, label: "Drive" },
     { id: "tasks" as const, label: "Tasks" },
+    { id: "analytics" as const, label: "Analytics" },
   ];
 
   return (
@@ -1007,6 +1055,392 @@ export default function Dashboard() {
                 )}
               </div>
             ))}
+          </div>
+        )}
+        {/* ─── ANALYTICS TAB ─── */}
+        {tab === "analytics" && (
+          <div className="space-y-6">
+            {historyLoading && !history && (
+              <div className="bg-white rounded-2xl p-12 shadow-sm text-center">
+                <div className="w-8 h-8 border-2 border-[#0071e3] border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+                <p className="text-[#86868b] text-sm">
+                  Loading historical data from 2020...
+                </p>
+                <p className="text-[#86868b] text-xs mt-1">
+                  This may take 30-60 seconds the first time
+                </p>
+              </div>
+            )}
+
+            {history && (() => {
+              const filteredMonthly =
+                historyYear === "all"
+                  ? history.monthly
+                  : history.monthly.filter((m) => m.year === historyYear);
+
+              const filteredYearly = history.yearly;
+
+              const totalReceived = filteredMonthly.reduce((s, m) => s + m.received, 0);
+              const totalSent = filteredMonthly.reduce((s, m) => s + m.sent, 0);
+              const totalMeetings = filteredMonthly.reduce((s, m) => s + m.meetings, 0);
+              const totalHours = Math.round(filteredMonthly.reduce((s, m) => s + m.meetingHours, 0) * 10) / 10;
+
+              const avgMonthlyEmails = Math.round((totalReceived + totalSent) / Math.max(filteredMonthly.length, 1));
+              const avgMonthlyMeetings = Math.round(totalMeetings / Math.max(filteredMonthly.length, 1));
+
+              // Year-over-year growth
+              const yoyGrowth = filteredYearly.length >= 2
+                ? (() => {
+                    const last = filteredYearly[filteredYearly.length - 1];
+                    const prev = filteredYearly[filteredYearly.length - 2];
+                    return {
+                      emailGrowth: prev.received > 0
+                        ? Math.round(((last.received - prev.received) / prev.received) * 100)
+                        : 0,
+                      meetingGrowth: prev.meetings > 0
+                        ? Math.round(((last.meetings - prev.meetings) / prev.meetings) * 100)
+                        : 0,
+                    };
+                  })()
+                : null;
+
+              // Peak month
+              const peakEmailMonth = [...filteredMonthly].sort((a, b) => (b.received + b.sent) - (a.received + a.sent))[0];
+              const peakMeetingMonth = [...filteredMonthly].sort((a, b) => b.meetings - a.meetings)[0];
+
+              return (
+                <>
+                  {/* Year Filter */}
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setHistoryYear("all")}
+                      className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
+                        historyYear === "all"
+                          ? "bg-[#1d1d1f] text-white"
+                          : "text-[#86868b] hover:bg-black/5"
+                      }`}
+                    >
+                      All Time
+                    </button>
+                    {history.yearly.map((y) => (
+                      <button
+                        key={y.year}
+                        onClick={() => setHistoryYear(y.year)}
+                        className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
+                          historyYear === y.year
+                            ? "bg-[#1d1d1f] text-white"
+                            : "text-[#86868b] hover:bg-black/5"
+                        }`}
+                      >
+                        {y.year}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* KPIs */}
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                    <KpiCard
+                      label="Total Emails"
+                      value={(totalReceived + totalSent).toLocaleString()}
+                      sub={`${totalReceived.toLocaleString()} received · ${totalSent.toLocaleString()} sent`}
+                    />
+                    <KpiCard
+                      label="Total Meetings"
+                      value={totalMeetings.toLocaleString()}
+                      sub={`${totalHours.toLocaleString()}h in meetings`}
+                    />
+                    <KpiCard
+                      label="Avg / Month"
+                      value={avgMonthlyEmails.toLocaleString()}
+                      sub={`emails · ${avgMonthlyMeetings} meetings`}
+                    />
+                    {yoyGrowth && historyYear === "all" ? (
+                      <KpiCard
+                        label="YoY Change"
+                        value={`${yoyGrowth.emailGrowth > 0 ? "+" : ""}${yoyGrowth.emailGrowth}%`}
+                        sub={`emails · ${yoyGrowth.meetingGrowth > 0 ? "+" : ""}${yoyGrowth.meetingGrowth}% meetings`}
+                        accent={yoyGrowth.emailGrowth > 0 ? "text-emerald-500" : "text-red-500"}
+                      />
+                    ) : (
+                      <KpiCard
+                        label="Peak Month"
+                        value={peakEmailMonth?.label || "---"}
+                        sub={`${(peakEmailMonth?.received || 0) + (peakEmailMonth?.sent || 0)} emails`}
+                      />
+                    )}
+                  </div>
+
+                  {/* Yearly Overview (only in All Time view) */}
+                  {historyYear === "all" && (
+                    <div className="bg-white rounded-2xl p-5 shadow-sm">
+                      <p className="text-[13px] text-[#86868b] font-medium mb-4">
+                        Yearly Overview
+                      </p>
+                      <ResponsiveContainer width="100%" height={280}>
+                        <ComposedChart data={filteredYearly}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                          <XAxis
+                            dataKey="year"
+                            tick={{ fontSize: 12, fill: "#86868b" }}
+                            axisLine={false}
+                            tickLine={false}
+                          />
+                          <YAxis
+                            yAxisId="left"
+                            tick={{ fontSize: 12, fill: "#86868b" }}
+                            axisLine={false}
+                            tickLine={false}
+                          />
+                          <YAxis
+                            yAxisId="right"
+                            orientation="right"
+                            tick={{ fontSize: 12, fill: "#86868b" }}
+                            axisLine={false}
+                            tickLine={false}
+                          />
+                          <Tooltip
+                            contentStyle={{
+                              background: "#1d1d1f",
+                              border: "none",
+                              borderRadius: 10,
+                              color: "#fff",
+                              fontSize: 12,
+                            }}
+                          />
+                          <Legend
+                            wrapperStyle={{ fontSize: 12 }}
+                          />
+                          <Bar
+                            yAxisId="left"
+                            dataKey="received"
+                            fill="#0071e3"
+                            radius={[6, 6, 0, 0]}
+                            maxBarSize={40}
+                            name="Emails Received"
+                          />
+                          <Bar
+                            yAxisId="left"
+                            dataKey="sent"
+                            fill="#5ac8fa"
+                            radius={[6, 6, 0, 0]}
+                            maxBarSize={40}
+                            name="Emails Sent"
+                          />
+                          <Line
+                            yAxisId="right"
+                            type="monotone"
+                            dataKey="meetings"
+                            stroke="#ff9500"
+                            strokeWidth={3}
+                            dot={{ fill: "#ff9500", r: 5 }}
+                            name="Meetings"
+                          />
+                        </ComposedChart>
+                      </ResponsiveContainer>
+                    </div>
+                  )}
+
+                  {/* Monthly Email Volume */}
+                  <div className="bg-white rounded-2xl p-5 shadow-sm">
+                    <p className="text-[13px] text-[#86868b] font-medium mb-4">
+                      Email Volume by Month
+                    </p>
+                    <ResponsiveContainer width="100%" height={300}>
+                      <AreaChart data={filteredMonthly}>
+                        <defs>
+                          <linearGradient id="colorHistReceived" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#0071e3" stopOpacity={0.2} />
+                            <stop offset="95%" stopColor="#0071e3" stopOpacity={0} />
+                          </linearGradient>
+                          <linearGradient id="colorHistSent" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#34c759" stopOpacity={0.2} />
+                            <stop offset="95%" stopColor="#34c759" stopOpacity={0} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                        <XAxis
+                          dataKey="label"
+                          tick={{ fontSize: 10, fill: "#86868b" }}
+                          axisLine={false}
+                          tickLine={false}
+                          interval={historyYear === "all" ? 5 : 0}
+                          angle={historyYear === "all" ? -45 : 0}
+                          textAnchor={historyYear === "all" ? "end" : "middle"}
+                          height={historyYear === "all" ? 60 : 30}
+                        />
+                        <YAxis
+                          tick={{ fontSize: 12, fill: "#86868b" }}
+                          axisLine={false}
+                          tickLine={false}
+                        />
+                        <Tooltip
+                          contentStyle={{
+                            background: "#1d1d1f",
+                            border: "none",
+                            borderRadius: 10,
+                            color: "#fff",
+                            fontSize: 12,
+                          }}
+                        />
+                        <Legend wrapperStyle={{ fontSize: 12 }} />
+                        <Area
+                          type="monotone"
+                          dataKey="received"
+                          stroke="#0071e3"
+                          strokeWidth={2}
+                          fillOpacity={1}
+                          fill="url(#colorHistReceived)"
+                          name="Received"
+                        />
+                        <Area
+                          type="monotone"
+                          dataKey="sent"
+                          stroke="#34c759"
+                          strokeWidth={2}
+                          fillOpacity={1}
+                          fill="url(#colorHistSent)"
+                          name="Sent"
+                        />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+
+                  {/* Monthly Meeting Hours */}
+                  <div className="bg-white rounded-2xl p-5 shadow-sm">
+                    <p className="text-[13px] text-[#86868b] font-medium mb-4">
+                      Meetings & Hours by Month
+                    </p>
+                    <ResponsiveContainer width="100%" height={300}>
+                      <ComposedChart data={filteredMonthly}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                        <XAxis
+                          dataKey="label"
+                          tick={{ fontSize: 10, fill: "#86868b" }}
+                          axisLine={false}
+                          tickLine={false}
+                          interval={historyYear === "all" ? 5 : 0}
+                          angle={historyYear === "all" ? -45 : 0}
+                          textAnchor={historyYear === "all" ? "end" : "middle"}
+                          height={historyYear === "all" ? 60 : 30}
+                        />
+                        <YAxis
+                          yAxisId="left"
+                          tick={{ fontSize: 12, fill: "#86868b" }}
+                          axisLine={false}
+                          tickLine={false}
+                        />
+                        <YAxis
+                          yAxisId="right"
+                          orientation="right"
+                          tick={{ fontSize: 12, fill: "#86868b" }}
+                          axisLine={false}
+                          tickLine={false}
+                        />
+                        <Tooltip
+                          contentStyle={{
+                            background: "#1d1d1f",
+                            border: "none",
+                            borderRadius: 10,
+                            color: "#fff",
+                            fontSize: 12,
+                          }}
+                          formatter={(value, name) => [
+                            name === "Hours" ? `${value}h` : value,
+                            name,
+                          ]}
+                        />
+                        <Legend wrapperStyle={{ fontSize: 12 }} />
+                        <Bar
+                          yAxisId="left"
+                          dataKey="meetings"
+                          fill="#ff9500"
+                          radius={[4, 4, 0, 0]}
+                          maxBarSize={historyYear === "all" ? 12 : 28}
+                          name="Meetings"
+                        />
+                        <Line
+                          yAxisId="right"
+                          type="monotone"
+                          dataKey="meetingHours"
+                          stroke="#ff3b30"
+                          strokeWidth={2}
+                          dot={false}
+                          name="Hours"
+                        />
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  </div>
+
+                  {/* Insights */}
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <div className="bg-white rounded-2xl p-5 shadow-sm">
+                      <p className="text-[13px] text-[#86868b] font-medium mb-3">
+                        Peak Months
+                      </p>
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-sm font-medium">Busiest Email Month</p>
+                            <p className="text-xs text-[#86868b]">{peakEmailMonth?.label}</p>
+                          </div>
+                          <p className="text-lg font-bold text-[#0071e3]">
+                            {((peakEmailMonth?.received || 0) + (peakEmailMonth?.sent || 0)).toLocaleString()}
+                          </p>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-sm font-medium">Most Meetings</p>
+                            <p className="text-xs text-[#86868b]">{peakMeetingMonth?.label}</p>
+                          </div>
+                          <p className="text-lg font-bold text-[#ff9500]">
+                            {peakMeetingMonth?.meetings.toLocaleString()}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="bg-white rounded-2xl p-5 shadow-sm">
+                      <p className="text-[13px] text-[#86868b] font-medium mb-3">
+                        Year-over-Year
+                      </p>
+                      <div className="space-y-2">
+                        {history.yearly.map((y, i) => {
+                          const prev = i > 0 ? history.yearly[i - 1] : null;
+                          const emailChange = prev && prev.received > 0
+                            ? Math.round(((y.received - prev.received) / prev.received) * 100)
+                            : null;
+                          return (
+                            <div key={y.year} className="flex items-center justify-between">
+                              <span className="text-sm font-medium">{y.year}</span>
+                              <div className="flex items-center gap-4 text-xs">
+                                <span className="text-[#86868b]">
+                                  {y.received.toLocaleString()} emails
+                                </span>
+                                <span className="text-[#86868b]">
+                                  {y.meetings.toLocaleString()} meetings
+                                </span>
+                                {emailChange !== null && (
+                                  <span
+                                    className={`font-medium ${
+                                      emailChange >= 0
+                                        ? "text-emerald-500"
+                                        : "text-red-500"
+                                    }`}
+                                  >
+                                    {emailChange > 0 ? "+" : ""}
+                                    {emailChange}%
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                </>
+              );
+            })()}
           </div>
         )}
       </div>
