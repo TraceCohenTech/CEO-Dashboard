@@ -1956,20 +1956,24 @@ export default function Dashboard() {
             })}
           </p>
           <div className="flex items-center gap-4">
-            <a
-              href="https://x.com/Trace_Cohen"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="hover:text-[#1d1d1f] transition-colors"
-            >
-              Twitter
-            </a>
-            <a
-              href="mailto:t@nyvp.com"
-              className="hover:text-[#1d1d1f] transition-colors"
-            >
-              Email
-            </a>
+            {process.env.NEXT_PUBLIC_TWITTER_URL && (
+              <a
+                href={process.env.NEXT_PUBLIC_TWITTER_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hover:text-[#1d1d1f] transition-colors"
+              >
+                Twitter
+              </a>
+            )}
+            {process.env.NEXT_PUBLIC_CONTACT_EMAIL && (
+              <a
+                href={`mailto:${process.env.NEXT_PUBLIC_CONTACT_EMAIL}`}
+                className="hover:text-[#1d1d1f] transition-colors"
+              >
+                Email
+              </a>
+            )}
           </div>
         </div>
       </footer>
