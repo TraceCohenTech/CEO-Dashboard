@@ -242,6 +242,16 @@ function extractEmail(from: string) {
   return match ? match[1].toLowerCase() : from.includes("@") ? from.trim().toLowerCase() : "";
 }
 
+function isSpamOrAutomated(addressField: string) {
+  const email = extractEmail(addressField) || addressField.toLowerCase();
+  const local = email.split("@")[0] || "";
+  if (/^[a-z0-9]{20,}$/.test(local)) return true;
+  if (/[+=]/.test(local) && local.length > 20) return true;
+  if (/^(noreply|no-reply|notifications?|mailer-daemon|bounce|postmaster|donotreply)/.test(local)) return true;
+  if (/@(googlegroups\.com|calendar-notification|notifications\.)/.test(email)) return true;
+  return false;
+}
+
 function formatBytes(bytes: string) {
   const b = parseInt(bytes);
   if (b === 0) return "0 B";
@@ -559,7 +569,7 @@ export default function Dashboard() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<"overview" | "calendar" | "email" | "inbox" | "drive" | "tasks" | "analytics">("overview");
+  const [tab, setTab] = useState<"overview" | "calendar" | "email" | "inbox" | "drive" | "analytics">("overview");
   const [history, setHistory] = useState<HistoryData | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [heatmap, setHeatmap] = useState<HeatmapDay[] | null>(null);
@@ -667,7 +677,6 @@ export default function Dashboard() {
     { id: "email" as const, label: "Email" },
     { id: "inbox" as const, label: "Inbox Intel" },
     { id: "drive" as const, label: "Drive" },
-    { id: "tasks" as const, label: "Tasks" },
     { id: "analytics" as const, label: "Analytics" },
   ];
 
@@ -760,13 +769,13 @@ export default function Dashboard() {
                 const topContactEmails = new Set(
                   data.topContacts.slice(0, 10).map((c) => c.email.toLowerCase())
                 );
-                const allUnread = data.email.recent.filter((e) => e.isUnread);
+                const allUnread = data.email.recent.filter((e) => e.isUnread && !isSpamOrAutomated(e.from));
                 const vipUnread = allUnread.filter((e) => {
                   const email = extractEmail(e.from);
                   return email && topContactEmails.has(email);
                 });
                 const otherUnread = allUnread.filter((e) => !vipUnread.includes(e));
-                const followUps = overview?.pendingFollowUps || [];
+                const followUps = (overview?.pendingFollowUps || []).filter((f) => !isSpamOrAutomated(f.to));
 
                 type ActionItem =
                   | { type: "overdue"; task: TaskItem }
@@ -885,10 +894,10 @@ export default function Dashboard() {
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
                 {/* Waiting On Others */}
                 {(() => {
-                  const followUps = overview?.pendingFollowUps || [];
+                  const followUps = (overview?.pendingFollowUps || []).filter((f) => !isSpamOrAutomated(f.to));
                   const followUpKeys = new Set(followUps.map((fu) => `${fu.to}::${fu.subject}`));
                   const recentWaiting = data.recentSent
-                    .filter((s) => !followUpKeys.has(`${s.to}::${s.subject}`))
+                    .filter((s) => !isSpamOrAutomated(s.to) && !followUpKeys.has(`${s.to}::${s.subject}`))
                     .slice(0, 4);
 
                   const allWaiting = [
@@ -1379,7 +1388,7 @@ export default function Dashboard() {
                         {data.tasks.totalOpen}
                       </span>
                     </div>
-                    <button onClick={() => setTab("tasks")} className="text-[#0071e3] text-[11px] font-medium">All Tasks</button>
+                    <span className="text-[11px] text-[#86868b]">{data.tasks.totalOpen} open</span>
                   </div>
                   <div className="grid grid-cols-1 lg:grid-cols-2 divide-y lg:divide-y-0 lg:divide-x divide-[#f0f0f0]">
                     {data.tasks.lists.filter(l => l.open.length > 0).slice(0, 2).map((list) => (
@@ -1957,111 +1966,6 @@ export default function Dashboard() {
                   ))}
                 </div>
               </div>
-            </motion.div>
-          )}
-
-          {/* ─── TASKS TAB ─── */}
-          {tab === "tasks" && (
-            <motion.div
-              key="tasks"
-              variants={tabVariants}
-              initial="initial"
-              animate="animate"
-              exit="exit"
-              transition={{ duration: 0.3 }}
-              className="space-y-6"
-            >
-              <div className="grid grid-cols-3 gap-4 stagger">
-                <KpiCard
-                  label="Open"
-                  value={data.tasks.totalOpen}
-                  accent={data.tasks.overdue > 0 ? "text-orange-500" : ""}
-                />
-                <KpiCard label="Completed" value={data.tasks.totalCompleted} />
-                <KpiCard
-                  label="Completion Rate"
-                  value={
-                    data.tasks.totalOpen + data.tasks.totalCompleted > 0
-                      ? `${Math.round(
-                          (data.tasks.totalCompleted /
-                            (data.tasks.totalOpen + data.tasks.totalCompleted)) *
-                            100
-                        )}%`
-                      : "---"
-                  }
-                />
-              </div>
-
-              {data.tasks.overdue > 0 && (
-                <div className="bg-orange-50 border border-orange-200 rounded-2xl p-4">
-                  <p className="text-sm font-medium text-orange-700">
-                    {data.tasks.overdue} overdue task
-                    {data.tasks.overdue !== 1 ? "s" : ""}
-                  </p>
-                </div>
-              )}
-
-              {data.tasks.lists.map((list) => (
-                <div key={list.listName} className="bg-white rounded-2xl shadow-sm overflow-hidden card-hover">
-                  <div className="px-5 pt-5 pb-3 flex items-center justify-between">
-                    <p className="text-[13px] text-[#86868b] font-medium">
-                      {list.listName}
-                    </p>
-                    <span className="text-[11px] text-[#86868b]">
-                      {list.open.length} open \u00b7 {list.completedCount} done
-                    </span>
-                  </div>
-                  {list.open.length > 0 ? (
-                    <div className="divide-y divide-[#f5f5f5]">
-                      {list.open.map((task) => {
-                        const isOverdue =
-                          task.due && new Date(task.due) < new Date();
-                        return (
-                          <div
-                            key={task.id}
-                            className="px-5 py-3.5 flex items-start gap-3"
-                          >
-                            <div
-                              className={`w-4 h-4 rounded-full border-2 mt-0.5 shrink-0 ${
-                                isOverdue
-                                  ? "border-orange-400"
-                                  : "border-[#d1d1d6]"
-                              }`}
-                            />
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-medium">{task.title}</p>
-                              {task.due && (
-                                <p
-                                  className={`text-[11px] mt-0.5 ${
-                                    isOverdue
-                                      ? "text-orange-500 font-medium"
-                                      : "text-[#86868b]"
-                                  }`}
-                                >
-                                  {isOverdue ? "Overdue \u00b7 " : "Due "}
-                                  {new Date(task.due).toLocaleDateString("en-US", {
-                                    month: "short",
-                                    day: "numeric",
-                                  })}
-                                </p>
-                              )}
-                              {task.notes && (
-                                <p className="text-[11px] text-[#86868b] truncate mt-0.5">
-                                  {task.notes}
-                                </p>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <p className="px-5 pb-5 text-[#86868b] text-sm">
-                      All tasks complete
-                    </p>
-                  )}
-                </div>
-              ))}
             </motion.div>
           )}
 
