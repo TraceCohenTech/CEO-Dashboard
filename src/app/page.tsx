@@ -69,6 +69,36 @@ interface TopContact {
   count: number;
 }
 
+interface OverviewAttendee {
+  email: string;
+  displayName?: string;
+  responseStatus?: string;
+  emailHistory: { subject: string; snippet: string; date: string }[];
+}
+
+interface MeetingPrepData {
+  summary?: string;
+  start?: { dateTime?: string; date?: string };
+  end?: { dateTime?: string; date?: string };
+  hangoutLink?: string;
+  location?: string;
+  attendees: OverviewAttendee[];
+}
+
+interface PendingFollowUp {
+  id: string;
+  to: string;
+  subject: string;
+  date: string;
+}
+
+interface OverviewData {
+  upcomingEvents: CalendarEvent[];
+  meetingPrep: MeetingPrepData[];
+  pendingFollowUps: PendingFollowUp[];
+  generatedAt: string;
+}
+
 interface DashboardData {
   user: { name: string; email: string; photo: string };
   today: {
@@ -528,6 +558,9 @@ export default function Dashboard() {
   const [history, setHistory] = useState<HistoryData | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [heatmap, setHeatmap] = useState<HeatmapDay[] | null>(null);
+  const [overview, setOverview] = useState<OverviewData | null>(null);
+  const [overviewLoading, setOverviewLoading] = useState(false);
+  const [expandedPrep, setExpandedPrep] = useState<number | null>(null);
 
   const fetchData = useCallback(() => {
     setLoading(true);
@@ -546,6 +579,18 @@ export default function Dashboard() {
     const interval = setInterval(fetchData, 5 * 60 * 1000);
     return () => clearInterval(interval);
   }, [fetchData]);
+
+  useEffect(() => {
+    if (tab === "overview" && !overview && !overviewLoading && data) {
+      setOverviewLoading(true);
+      fetch("/api/overview")
+        .then((r) => r.json())
+        .then((d) => {
+          if (!d.error) setOverview(d);
+        })
+        .finally(() => setOverviewLoading(false));
+    }
+  }, [tab, overview, overviewLoading, data]);
 
   useEffect(() => {
     if (tab === "analytics" && !history && !historyLoading) {
@@ -698,240 +743,481 @@ export default function Dashboard() {
               animate="animate"
               exit="exit"
               transition={{ duration: 0.3 }}
-              className="space-y-6"
+              className="space-y-4"
             >
-              {/* KPIs */}
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 stagger">
-                <KpiCard
-                  label="Meetings Today"
-                  value={data.today.meetingsLeft}
-                  sub={`${data.calendar.totalMeetingsThisWeek} this week`}
-                  wow={meetingWow}
-                />
-                <KpiCard
-                  label="Unread Emails"
-                  value={data.email.unreadCount}
-                  sub={`${data.today.sentEmails} sent today`}
-                  accent={data.email.unreadCount > 50 ? "text-red-500" : ""}
-                  wow={emailWow}
-                />
-                <KpiCard
-                  label="Open Tasks"
-                  value={data.tasks.totalOpen}
-                  sub={
-                    data.tasks.overdue > 0
-                      ? `${data.tasks.overdue} overdue`
-                      : `${data.tasks.totalCompleted} completed`
-                  }
-                  accent={data.tasks.overdue > 0 ? "text-orange-500" : ""}
-                />
-                <KpiCard
-                  label="Meeting Hours"
-                  value={`${data.calendar.meetingHoursThisWeek}h`}
-                  sub="this week"
-                  wow={hoursWow}
-                />
-              </div>
-
-              {/* Next Meeting + Today's Schedule */}
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                <div>
-                  {data.today.events.length > 0 ? (
-                    <NextMeetingCard event={data.today.events[0]} />
-                  ) : (
-                    <div className="bg-gradient-to-br from-emerald-600 to-emerald-700 rounded-2xl p-5 text-white shadow-lg card-hover">
-                      <p className="text-[13px] text-white/50 font-medium">Today</p>
-                      <p className="text-lg font-semibold mt-2">No more meetings</p>
-                      <p className="text-sm text-white/70 mt-1">You have the rest of the day free</p>
+              {/* ── Pulse Strip ── */}
+              <div className="bg-white rounded-2xl shadow-sm px-5 py-3 flex items-center justify-between flex-wrap gap-y-2">
+                <div className="flex items-center divide-x divide-[#e5e5e5]">
+                  {[
+                    {
+                      n: data.email.unreadCount,
+                      label: "unread",
+                      accent: data.email.unreadCount > 50 ? "text-red-500" : "text-[#0071e3]",
+                      wow: emailWow,
+                    },
+                    {
+                      n: data.today.meetingsLeft,
+                      label: `meeting${data.today.meetingsLeft !== 1 ? "s" : ""} left`,
+                      accent: "text-[#1d1d1f]",
+                      wow: null,
+                    },
+                    {
+                      n: data.tasks.overdue,
+                      label: "overdue",
+                      accent: data.tasks.overdue > 0 ? "text-orange-500" : "text-[#1d1d1f]",
+                      wow: null,
+                    },
+                    {
+                      n: data.today.sentEmails,
+                      label: "sent today",
+                      accent: "text-emerald-600",
+                      wow: null,
+                    },
+                  ].map((item, i) => (
+                    <div key={i} className="flex items-baseline gap-1.5 px-4 first:pl-0 last:pr-0">
+                      <span className={`text-xl font-bold tabular-nums ${item.accent}`}>
+                        {typeof item.n === "number" ? <AnimatedNumber value={item.n} /> : item.n}
+                      </span>
+                      <span className="text-[12px] text-[#86868b]">{item.label}</span>
+                      {item.wow && (
+                        <span className={`text-[10px] font-semibold ${item.wow.up ? "text-emerald-500" : "text-red-400"}`}>
+                          {item.wow.up ? "\u2191" : "\u2193"}{Math.abs(item.wow.pct)}%
+                        </span>
+                      )}
                     </div>
+                  ))}
+                </div>
+                <div className="flex items-baseline gap-1.5">
+                  <span className="text-xl font-bold tabular-nums">{data.calendar.meetingHoursThisWeek}h</span>
+                  <span className="text-[12px] text-[#86868b]">meetings this week</span>
+                  {hoursWow && (
+                    <span className={`text-[10px] font-semibold ${hoursWow.up ? "text-emerald-500" : "text-red-400"}`}>
+                      {hoursWow.up ? "\u2191" : "\u2193"}{Math.abs(hoursWow.pct)}%
+                    </span>
                   )}
                 </div>
-                <div className="lg:col-span-2 bg-white rounded-2xl p-5 shadow-sm card-hover">
-                  <p className="text-[13px] text-[#86868b] font-medium mb-3">
-                    Today&apos;s Schedule
-                  </p>
-                  {data.today.events.length > 0 ? (
-                    <div className="space-y-3">
-                      {data.today.events.map((event, i) => (
-                        <div key={i} className="flex items-center gap-4">
-                          <span className="text-sm text-[#86868b] w-20 shrink-0 text-right font-mono">
-                            {event.start?.dateTime ? formatTime(event.start.dateTime) : "All day"}
-                          </span>
-                          <div className="w-2 h-2 rounded-full bg-[#0071e3] shrink-0" />
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center justify-between gap-2">
-                              <p className="text-sm font-medium truncate">{event.summary || "Untitled"}</p>
-                              {event.hangoutLink && (
-                                <a href={event.hangoutLink} target="_blank" rel="noopener noreferrer"
-                                  className="text-[#0071e3] text-xs font-medium shrink-0 hover:underline">Join</a>
-                              )}
-                            </div>
-                            {event.attendees && event.attendees.length > 0 && (
-                              <div className="flex items-center gap-1 mt-1">
-                                {event.attendees.slice(0, 4).map((a, j) => (
-                                  <div key={j} className="w-5 h-5 rounded-full bg-[#e5e5e5] flex items-center justify-center text-[9px] font-bold text-[#86868b] -ml-1 first:ml-0 ring-1 ring-white"
+              </div>
+
+              {/* ── Next Meeting + Today's Schedule ── */}
+              {(() => {
+                const now = new Date();
+                const upNextEvents = overview?.upcomingEvents || data.today.events;
+                const todayEnd = new Date(now);
+                todayEnd.setHours(23, 59, 59, 999);
+
+                const remainingToday = upNextEvents.filter((e) => {
+                  const start = e.start?.dateTime || e.start?.date || "";
+                  const d = new Date(start);
+                  return d >= now && d <= todayEnd;
+                });
+
+                const tomorrow = new Date(now);
+                tomorrow.setDate(tomorrow.getDate() + 1);
+                tomorrow.setHours(0, 0, 0, 0);
+                const tomorrowEnd = new Date(tomorrow);
+                tomorrowEnd.setHours(23, 59, 59, 999);
+
+                const tomorrowEvents = upNextEvents.filter((e) => {
+                  const start = e.start?.dateTime || e.start?.date || "";
+                  const d = new Date(start);
+                  return d >= tomorrow && d <= tomorrowEnd;
+                });
+
+                const dayAfter = new Date(now);
+                dayAfter.setDate(dayAfter.getDate() + 2);
+                dayAfter.setHours(0, 0, 0, 0);
+                const dayAfterEnd = new Date(dayAfter);
+                dayAfterEnd.setHours(23, 59, 59, 999);
+
+                const dayAfterEvents = upNextEvents.filter((e) => {
+                  const start = e.start?.dateTime || e.start?.date || "";
+                  const d = new Date(start);
+                  return d >= dayAfter && d <= dayAfterEnd;
+                });
+
+                let displayEvents: CalendarEvent[];
+                let headerLabel: string;
+
+                if (remainingToday.length > 0) {
+                  displayEvents = remainingToday;
+                  headerLabel = "Rest of Today";
+                } else if (tomorrowEvents.length > 0) {
+                  displayEvents = tomorrowEvents;
+                  headerLabel = "Tomorrow";
+                } else if (dayAfterEvents.length > 0) {
+                  displayEvents = dayAfterEvents;
+                  headerLabel = dayAfter.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
+                } else {
+                  displayEvents = [];
+                  headerLabel = "Up Next";
+                }
+
+                const nextEvent = displayEvents[0];
+                const restEvents = displayEvents.slice(1);
+
+                return (
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+                    {/* Next Meeting Hero */}
+                    {nextEvent ? (
+                      <div className="bg-gradient-to-br from-[#1d1d1f] to-[#2d2d2f] rounded-2xl p-5 text-white shadow-lg card-hover flex flex-col justify-between">
+                        <div>
+                          <div className="flex items-center justify-between">
+                            <p className="text-[11px] text-white/40 font-medium uppercase tracking-wider">Next Up</p>
+                            {nextEvent.start?.dateTime && (
+                              <span className="text-[11px] text-white/50 font-mono">{timeUntil(nextEvent.start.dateTime)}</span>
+                            )}
+                          </div>
+                          <p className="text-[17px] font-semibold mt-3 leading-snug">{nextEvent.summary || "Untitled"}</p>
+                          <p className="text-[13px] text-white/60 mt-1">
+                            {nextEvent.start?.dateTime ? formatTime(nextEvent.start.dateTime) : "All day"}
+                            {nextEvent.end?.dateTime && nextEvent.start?.dateTime && ` \u2013 ${formatTime(nextEvent.end.dateTime)}`}
+                          </p>
+                          {nextEvent.location && (
+                            <p className="text-[11px] text-white/40 mt-1 truncate">{nextEvent.location}</p>
+                          )}
+                        </div>
+                        <div className="flex items-center justify-between mt-4">
+                          {nextEvent.attendees && nextEvent.attendees.length > 0 ? (
+                            <div className="flex items-center gap-2">
+                              <div className="flex -space-x-1.5">
+                                {nextEvent.attendees.slice(0, 5).map((a, j) => (
+                                  <div key={j} className="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center text-[10px] font-bold text-white ring-1 ring-white/10"
                                     title={a.displayName || a.email}>
                                     {(a.displayName || a.email).charAt(0).toUpperCase()}
                                   </div>
                                 ))}
-                                {event.attendees.length > 4 && (
-                                  <span className="text-[10px] text-[#86868b] ml-1">+{event.attendees.length - 4}</span>
-                                )}
                               </div>
-                            )}
-                          </div>
+                              <span className="text-[11px] text-white/40">
+                                {nextEvent.attendees.length} attendee{nextEvent.attendees.length !== 1 ? "s" : ""}
+                              </span>
+                            </div>
+                          ) : <div />}
+                          {nextEvent.hangoutLink && (
+                            <a href={nextEvent.hangoutLink} target="_blank" rel="noopener noreferrer"
+                              className="bg-white/15 hover:bg-white/25 text-white text-[12px] font-medium px-4 py-1.5 rounded-lg transition-colors backdrop-blur-sm">
+                              Join Call
+                            </a>
+                          )}
                         </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="text-[#86868b] text-sm py-4 text-center">No events scheduled today</p>
-                  )}
-                </div>
-              </div>
+                      </div>
+                    ) : (
+                      <div className="bg-gradient-to-br from-emerald-600 to-emerald-700 rounded-2xl p-5 text-white shadow-lg card-hover">
+                        <p className="text-[11px] text-white/40 font-medium uppercase tracking-wider">{headerLabel}</p>
+                        <p className="text-[17px] font-semibold mt-3">Clear runway</p>
+                        <p className="text-[13px] text-white/60 mt-1">No meetings on deck</p>
+                      </div>
+                    )}
 
-              {/* Needs Attention + Overdue Tasks */}
-              {(() => {
-                const overdueTasks = data.tasks.lists
-                  .flatMap((l) => l.open)
-                  .filter((t) => t.due && new Date(t.due) < new Date());
-                const importantUnread = data.email.recent.filter((e) => e.isUnread);
-                const hasAttention = overdueTasks.length > 0 || importantUnread.length > 0;
-
-                if (!hasAttention) return null;
-                return (
-                  <div className="bg-gradient-to-r from-orange-50 to-red-50 border border-orange-200/50 rounded-2xl p-5 shadow-sm">
-                    <p className="text-[13px] font-semibold text-orange-800 mb-3">Needs Your Attention</p>
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                      {overdueTasks.length > 0 && (
-                        <div>
-                          <p className="text-[11px] uppercase tracking-wider text-orange-600 font-semibold mb-2">Overdue Tasks</p>
-                          <div className="space-y-2">
-                            {overdueTasks.slice(0, 3).map((task) => (
-                              <div key={task.id} className="flex items-center gap-2">
-                                <div className="w-3 h-3 rounded-full border-2 border-orange-400 shrink-0" />
-                                <p className="text-sm font-medium truncate">{task.title}</p>
-                                <span className="text-[10px] text-orange-500 font-medium shrink-0">
-                                  {new Date(task.due!).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                    {/* Schedule Timeline */}
+                    <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm overflow-hidden card-hover">
+                      <div className="px-4 pt-3 pb-1 flex items-center justify-between">
+                        <p className="text-[13px] text-[#86868b] font-medium">{headerLabel}</p>
+                        <span className="text-[11px] text-[#86868b]">{displayEvents.length} event{displayEvents.length !== 1 ? "s" : ""}</span>
+                      </div>
+                      {displayEvents.length > 0 ? (
+                        <div className="divide-y divide-[#f5f5f5]">
+                          {displayEvents.slice(0, 10).map((event, i) => {
+                            const isNext = i === 0;
+                            return (
+                              <div key={i} className={`px-4 py-2 flex items-center gap-3 ${isNext ? "bg-[#f0f7ff]" : "hover:bg-[#f9f9f9]"} transition-colors`}>
+                                <span className="text-[12px] text-[#86868b] w-14 shrink-0 text-right font-mono">
+                                  {event.start?.dateTime ? formatTime(event.start.dateTime) : "All day"}
                                 </span>
+                                <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${isNext ? "bg-[#0071e3]" : "bg-[#d1d1d6]"}`} />
+                                <p className={`text-[13px] truncate flex-1 ${isNext ? "font-semibold" : ""}`}>{event.summary || "Untitled"}</p>
+                                <div className="flex items-center gap-2 shrink-0">
+                                  {event.attendees && event.attendees.length > 0 && (
+                                    <div className="flex -space-x-1">
+                                      {event.attendees.slice(0, 3).map((a, j) => (
+                                        <div key={j} className="w-4 h-4 rounded-full bg-[#e5e5e5] flex items-center justify-center text-[7px] font-bold text-[#86868b] ring-1 ring-white"
+                                          title={a.displayName || a.email}>
+                                          {(a.displayName || a.email).charAt(0).toUpperCase()}
+                                        </div>
+                                      ))}
+                                      {event.attendees.length > 3 && (
+                                        <span className="text-[9px] text-[#86868b] ml-1">+{event.attendees.length - 3}</span>
+                                      )}
+                                    </div>
+                                  )}
+                                  {event.hangoutLink && (
+                                    <a href={event.hangoutLink} target="_blank" rel="noopener noreferrer"
+                                      className="text-[#0071e3] text-[11px] font-medium hover:underline">Join</a>
+                                  )}
+                                </div>
                               </div>
-                            ))}
-                          </div>
+                            );
+                          })}
                         </div>
-                      )}
-                      {importantUnread.length > 0 && (
-                        <div>
-                          <p className="text-[11px] uppercase tracking-wider text-red-600 font-semibold mb-2">Unread from People</p>
-                          <div className="space-y-2">
-                            {importantUnread.slice(0, 3).map((email) => (
-                              <div key={email.id} className="flex items-center gap-2">
-                                <div className="w-3 h-3 rounded-full bg-[#0071e3] shrink-0" />
-                                <p className="text-sm font-medium truncate">{parseFromName(email.from)}</p>
-                                <p className="text-[11px] text-[#86868b] truncate shrink-0">{formatRelative(email.date)}</p>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
+                      ) : (
+                        <p className="px-4 py-4 text-[13px] text-[#86868b]">No upcoming events</p>
                       )}
                     </div>
                   </div>
                 );
               })()}
 
-              {/* Follow Up + Week Ahead */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                {/* Follow Up */}
-                <div className="bg-white rounded-2xl shadow-sm overflow-hidden card-hover">
-                  <div className="px-5 pt-5 pb-3">
-                    <p className="text-[13px] text-[#86868b] font-medium">Follow Up</p>
-                    <p className="text-[11px] text-[#86868b]">Recently sent — may need a response</p>
-                  </div>
-                  <div className="divide-y divide-[#f5f5f5]">
-                    {data.recentSent.slice(0, 5).map((sent) => (
-                      <div key={sent.id} className="px-5 py-3 hover:bg-[#f9f9f9] transition-colors">
-                        <div className="flex items-center gap-2">
-                          <div className="w-5 h-5 rounded-full bg-gradient-to-br from-emerald-400 to-emerald-600 flex items-center justify-center shrink-0">
-                            <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 19.5l15-15m0 0H8.25m11.25 0v11.25" />
-                            </svg>
-                          </div>
-                          <p className="text-sm font-medium truncate flex-1">
-                            {parseFromName(sent.to)}
-                          </p>
-                          <span className="text-[11px] text-[#86868b] shrink-0">{formatRelative(sent.date)}</span>
-                        </div>
-                        <p className="text-[12px] text-[#1d1d1f]/60 truncate mt-0.5 ml-7">
-                          {sent.subject || "(no subject)"}
-                        </p>
+              {/* ── Inbox Intelligence ── */}
+              {(() => {
+                const cats = data.emailCategories;
+                const total = cats.totalInbox || 1;
+                const catColors: Record<string, string> = {
+                  dealFlow: "#0071e3",
+                  intros: "#5856d6",
+                  portfolio: "#34c759",
+                  newsletters: "#86868b",
+                };
+
+                return (
+                  <div className="bg-white rounded-2xl shadow-sm overflow-hidden card-hover">
+                    <div className="px-4 pt-3 pb-2 flex items-center justify-between">
+                      <p className="text-[13px] text-[#86868b] font-medium">Inbox Intelligence</p>
+                      <button onClick={() => setTab("inbox")} className="text-[#0071e3] text-[11px] font-medium">Details</button>
+                    </div>
+                    {/* Stacked bar */}
+                    <div className="px-4 pb-2">
+                      <div className="flex rounded-lg overflow-hidden h-2.5">
+                        {cats.categories.map((cat) => {
+                          const pct = (cat.count / total) * 100;
+                          if (pct < 0.5) return null;
+                          return (
+                            <div
+                              key={cat.key}
+                              className="transition-all"
+                              style={{ width: `${pct}%`, backgroundColor: catColors[cat.key] || "#d1d1d6" }}
+                              title={`${cat.label}: ${cat.count}`}
+                            />
+                          );
+                        })}
+                        {cats.otherCount > 0 && (
+                          <div style={{ width: `${(cats.otherCount / total) * 100}%`, backgroundColor: "#e5e5e5" }} title={`Other: ${cats.otherCount}`} />
+                        )}
                       </div>
-                    ))}
+                    </div>
+                    {/* Category rows */}
+                    <div className="grid grid-cols-2 lg:grid-cols-4 divide-x divide-[#f0f0f0] border-t border-[#f0f0f0]">
+                      {cats.categories.map((cat) => (
+                        <div key={cat.key} className="px-4 py-2.5">
+                          <div className="flex items-center gap-1.5 mb-1.5">
+                            <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: catColors[cat.key] || "#d1d1d6" }} />
+                            <span className="text-[11px] font-semibold text-[#1d1d1f]">{cat.label}</span>
+                            <span className="text-[11px] font-bold text-[#86868b] ml-auto">{cat.count}</span>
+                          </div>
+                          {cat.previews.length > 0 ? (
+                            <div className="space-y-1">
+                              {cat.previews.slice(0, 2).map((p) => (
+                                <p key={p.id} className="text-[11px] text-[#86868b] truncate leading-tight">
+                                  <span className="text-[#1d1d1f]/70 font-medium">{parseFromName(p.from)}</span>
+                                  {" \u00b7 "}
+                                  {p.subject || "(no subject)"}
+                                </p>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-[10px] text-[#d1d1d6]">No recent</p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
                   </div>
+                );
+              })()}
+
+              {/* ── Meeting Prep + Action Required row ── */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                {/* Meeting Prep */}
+                <div className="bg-white rounded-2xl shadow-sm overflow-hidden card-hover">
+                  <div className="px-4 pt-3 pb-1">
+                    <p className="text-[13px] text-[#86868b] font-medium">Meeting Prep</p>
+                  </div>
+                  {overviewLoading && !overview ? (
+                    <div className="px-4 py-3 space-y-2">
+                      <div className="skeleton h-3 w-3/4" />
+                      <div className="skeleton h-3 w-1/2" />
+                      <div className="skeleton h-3 w-2/3" />
+                    </div>
+                  ) : overview && overview.meetingPrep.length > 0 ? (
+                    <div className="divide-y divide-[#f5f5f5]">
+                      {overview.meetingPrep.map((meeting, idx) => {
+                        const isExpanded = expandedPrep === idx;
+                        return (
+                          <div key={idx}>
+                            <button
+                              onClick={() => setExpandedPrep(isExpanded ? null : idx)}
+                              className="w-full px-4 py-2.5 flex items-center gap-3 text-left hover:bg-[#f9f9f9] transition-colors"
+                            >
+                              <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-[#0071e3] to-[#5856d6] flex items-center justify-center shrink-0">
+                                <svg className="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+                                </svg>
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-[13px] font-semibold truncate">{meeting.summary || "Untitled"}</p>
+                                <p className="text-[11px] text-[#86868b]">
+                                  {meeting.start?.dateTime ? formatTime(meeting.start.dateTime) : "All day"}
+                                  {" \u00b7 "}
+                                  {meeting.attendees.length} attendee{meeting.attendees.length !== 1 ? "s" : ""}
+                                </p>
+                              </div>
+                              <svg className={`w-3.5 h-3.5 text-[#86868b] transition-transform shrink-0 ${isExpanded ? "rotate-180" : ""}`}
+                                fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                              </svg>
+                            </button>
+                            {isExpanded && (
+                              <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} transition={{ duration: 0.2 }}
+                                className="border-t border-[#f0f0f0]">
+                                <div className="px-4 py-2.5 space-y-2.5">
+                                  {meeting.attendees.map((att) => (
+                                    <div key={att.email} className="flex gap-2">
+                                      <div className="w-5 h-5 rounded-full bg-[#e5e5e5] flex items-center justify-center text-[9px] font-bold text-[#86868b] shrink-0 mt-0.5">
+                                        {(att.displayName || att.email).charAt(0).toUpperCase()}
+                                      </div>
+                                      <div className="min-w-0 flex-1">
+                                        <p className="text-[12px] font-medium">{att.displayName || att.email.split("@")[0]}</p>
+                                        {att.emailHistory.length > 0 ? att.emailHistory.slice(0, 2).map((t, ti) => (
+                                          <p key={ti} className="text-[11px] text-[#86868b] truncate">{t.subject || "(no subject)"}</p>
+                                        )) : (
+                                          <p className="text-[10px] text-[#d1d1d6]">No recent emails</p>
+                                        )}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </motion.div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="px-4 py-3 text-[12px] text-[#86868b]">No upcoming meetings with external attendees</p>
+                  )}
                 </div>
 
+                {/* Action Required */}
+                {(() => {
+                  const overdueTasks = data.tasks.lists
+                    .flatMap((l) => l.open)
+                    .filter((t) => t.due && new Date(t.due) < new Date());
+                  const importantUnread = data.email.recent.filter((e) => e.isUnread);
+                  const followUps = overview?.pendingFollowUps || [];
+                  const totalActions = overdueTasks.length + importantUnread.length + followUps.length;
+
+                  return (
+                    <div className="bg-white rounded-2xl shadow-sm overflow-hidden card-hover">
+                      <div className="px-4 pt-3 pb-1 flex items-center gap-2">
+                        <p className="text-[13px] text-[#86868b] font-medium">Needs Attention</p>
+                        {totalActions > 0 && (
+                          <span className="text-[10px] font-bold bg-red-100 text-red-600 px-1.5 py-0.5 rounded-full leading-none">{totalActions}</span>
+                        )}
+                      </div>
+                      {totalActions === 0 && !overviewLoading ? (
+                        <div className="px-4 py-6 flex flex-col items-center">
+                          <div className="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center mb-2">
+                            <svg className="w-4 h-4 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                            </svg>
+                          </div>
+                          <p className="text-[13px] font-medium text-[#1d1d1f]">All clear</p>
+                          <p className="text-[11px] text-[#86868b]">Nothing needs your attention right now</p>
+                        </div>
+                      ) : (
+                        <div className="divide-y divide-[#f5f5f5]">
+                          {/* Overdue tasks */}
+                          {overdueTasks.slice(0, 3).map((task) => (
+                            <div key={task.id} className="px-4 py-2 flex items-start gap-2">
+                              <div className="w-4 h-4 rounded-full border-2 border-orange-400 shrink-0 mt-0.5" />
+                              <div className="flex-1 min-w-0">
+                                <p className="text-[12px] font-medium truncate">{task.title}</p>
+                                <p className="text-[10px] text-orange-500">
+                                  Overdue {"\u00b7"} {new Date(task.due!).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                                </p>
+                              </div>
+                            </div>
+                          ))}
+                          {/* Unread emails */}
+                          {importantUnread.slice(0, 3).map((email) => (
+                            <div key={email.id} className="px-4 py-2 flex items-start gap-2">
+                              <div className="w-4 h-4 rounded-full bg-[#0071e3] flex items-center justify-center shrink-0 mt-0.5">
+                                <div className="w-1.5 h-1.5 rounded-full bg-white" />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-[12px] font-medium truncate">{parseFromName(email.from)}</p>
+                                <p className="text-[10px] text-[#86868b] truncate">{email.subject || "(no subject)"}</p>
+                              </div>
+                              <span className="text-[10px] text-[#86868b] shrink-0 mt-0.5">{formatRelative(email.date)}</span>
+                            </div>
+                          ))}
+                          {/* Pending follow-ups */}
+                          {overviewLoading && !overview && (
+                            <div className="px-4 py-2 space-y-1.5">
+                              <div className="skeleton h-3 w-3/4" />
+                              <div className="skeleton h-3 w-1/2" />
+                            </div>
+                          )}
+                          {followUps.slice(0, 3).map((fu) => (
+                            <div key={fu.id} className="px-4 py-2 flex items-start gap-2">
+                              <div className="w-4 h-4 rounded-full bg-[#5856d6] flex items-center justify-center shrink-0 mt-0.5">
+                                <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 19.5l15-15m0 0H8.25m11.25 0v11.25" />
+                                </svg>
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-[12px] font-medium truncate">To: {parseFromName(fu.to)}</p>
+                                <p className="text-[10px] text-[#86868b] truncate">{fu.subject || "(no subject)"} {"\u00b7"} no reply</p>
+                              </div>
+                              <span className="text-[10px] text-[#86868b] shrink-0 mt-0.5">{formatRelative(fu.date)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* ── Week + Volume + Busiest Hours ── */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
                 {/* Week at a Glance */}
-                <div className="bg-white rounded-2xl p-5 shadow-sm card-hover">
-                  <p className="text-[13px] text-[#86868b] font-medium mb-4">Week at a Glance</p>
-                  <div className="space-y-3">
+                <div className="bg-white rounded-2xl p-4 shadow-sm card-hover">
+                  <p className="text-[13px] text-[#86868b] font-medium mb-2">Week at a Glance</p>
+                  <div className="space-y-1.5">
                     {data.calendar.weeklyData.map((day) => {
                       const isToday = day.day === new Date().toLocaleDateString("en-US", { weekday: "short" });
                       const maxMeetings = Math.max(...data.calendar.weeklyData.map((d) => d.meetings), 1);
                       return (
-                        <div key={day.day} className={`flex items-center gap-3 ${isToday ? "bg-[#f0f7ff] -mx-2 px-2 py-1.5 rounded-lg" : ""}`}>
-                          <span className={`text-sm w-10 shrink-0 font-mono ${isToday ? "font-bold text-[#0071e3]" : "text-[#86868b]"}`}>
-                            {day.day}
-                          </span>
-                          <div className="flex-1 h-5 bg-[#f0f0f0] rounded-full overflow-hidden">
+                        <div key={day.day} className={`flex items-center gap-2 ${isToday ? "bg-[#f0f7ff] -mx-1 px-1 py-0.5 rounded-md" : ""}`}>
+                          <span className={`text-[12px] w-7 shrink-0 font-mono ${isToday ? "font-bold text-[#0071e3]" : "text-[#86868b]"}`}>{day.day}</span>
+                          <div className="flex-1 h-3 bg-[#f0f0f0] rounded-full overflow-hidden">
                             <motion.div
-                              className={`h-full rounded-full ${isToday ? "bg-[#0071e3]" : "bg-[#1d1d1f]/20"}`}
+                              className={`h-full rounded-full ${isToday ? "bg-[#0071e3]" : "bg-[#1d1d1f]/15"}`}
                               initial={{ width: 0 }}
                               animate={{ width: `${(day.meetings / maxMeetings) * 100}%` }}
                               transition={{ duration: 0.6 }}
                             />
                           </div>
-                          <span className={`text-xs tabular-nums w-14 text-right ${isToday ? "font-semibold" : "text-[#86868b]"}`}>
-                            {day.meetings} mtg{day.meetings !== 1 ? "s" : ""}
-                          </span>
+                          <span className={`text-[10px] tabular-nums w-6 text-right ${isToday ? "font-bold" : "text-[#86868b]"}`}>{day.meetings}</span>
+                          <span className={`text-[10px] tabular-nums w-10 text-right ${isToday ? "font-medium text-[#0071e3]" : "text-[#d1d1d6]"}`}>{day.hours}h</span>
                         </div>
                       );
                     })}
                   </div>
-                </div>
-              </div>
-
-              {/* Top Contacts + Email Volume */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                <div className="bg-white rounded-2xl shadow-sm overflow-hidden card-hover">
-                  <div className="px-5 pt-5 pb-3">
-                    <p className="text-[13px] text-[#86868b] font-medium">Top Contacts</p>
-                  </div>
-                  <div className="divide-y divide-[#f5f5f5]">
-                    {data.topContacts.slice(0, 5).map((contact, i) => {
-                      const maxCount = data.topContacts[0]?.count || 1;
-                      return (
-                        <div key={contact.email} className="px-5 py-3 flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#0071e3] to-[#5856d6] flex items-center justify-center text-white text-xs font-bold shrink-0">
-                            {contact.name.charAt(0).toUpperCase()}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium truncate">{contact.name}</p>
-                            <div className="mt-1 h-1.5 bg-[#f0f0f0] rounded-full overflow-hidden">
-                              <motion.div
-                                className="h-full bg-gradient-to-r from-[#0071e3] to-[#5856d6] rounded-full"
-                                initial={{ width: 0 }}
-                                animate={{ width: `${(contact.count / maxCount) * 100}%` }}
-                                transition={{ duration: 0.8, delay: i * 0.1 }}
-                              />
-                            </div>
-                          </div>
-                          <span className="text-xs text-[#86868b] font-medium tabular-nums shrink-0">{contact.count}</span>
-                        </div>
-                      );
-                    })}
+                  <div className="mt-2 pt-2 border-t border-[#f0f0f0] flex items-center justify-between text-[11px]">
+                    <span className="text-[#86868b]">Focus time</span>
+                    <span className="font-semibold text-emerald-600">{Math.max(0, Math.round((45 - data.calendar.meetingHoursThisWeek) * 10) / 10)}h available</span>
                   </div>
                 </div>
 
-                <div className="bg-white rounded-2xl p-5 shadow-sm card-hover">
-                  <p className="text-[13px] text-[#86868b] font-medium mb-4">Email Volume (7 Days)</p>
-                  <ResponsiveContainer width="100%" height={180}>
+                {/* Email Volume */}
+                <div className="bg-white rounded-2xl p-4 shadow-sm card-hover">
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-[13px] text-[#86868b] font-medium">Email Volume</p>
+                    <div className="flex items-center gap-3 text-[10px]">
+                      <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-[#0071e3]" />Received</span>
+                      <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-[#34c759]" />Sent</span>
+                    </div>
+                  </div>
+                  <ResponsiveContainer width="100%" height={130}>
                     <AreaChart data={data.email.dailyStats}>
                       <defs>
                         <linearGradient id="colorReceived" x1="0" y1="0" x2="0" y2="1">
@@ -943,55 +1229,186 @@ export default function Dashboard() {
                           <stop offset="95%" stopColor="#34c759" stopOpacity={0} />
                         </linearGradient>
                       </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                      <XAxis dataKey="dayLabel" tick={{ fontSize: 12, fill: "#86868b" }} axisLine={false} tickLine={false} />
+                      <XAxis dataKey="dayLabel" tick={{ fontSize: 10, fill: "#86868b" }} axisLine={false} tickLine={false} />
                       <YAxis hide />
                       <Tooltip contentStyle={tooltipStyle} />
-                      <Area type="monotone" dataKey="received" stroke="#0071e3" strokeWidth={2} fillOpacity={1} fill="url(#colorReceived)" name="Received" />
-                      <Area type="monotone" dataKey="sent" stroke="#34c759" strokeWidth={2} fillOpacity={1} fill="url(#colorSent)" name="Sent" />
+                      <Area type="monotone" dataKey="received" stroke="#0071e3" strokeWidth={1.5} fillOpacity={1} fill="url(#colorReceived)" name="Received" />
+                      <Area type="monotone" dataKey="sent" stroke="#34c759" strokeWidth={1.5} fillOpacity={1} fill="url(#colorSent)" name="Sent" />
                     </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+
+                {/* Busiest Hours */}
+                <div className="bg-white rounded-2xl p-4 shadow-sm card-hover">
+                  <p className="text-[13px] text-[#86868b] font-medium mb-2">Busiest Hours</p>
+                  <ResponsiveContainer width="100%" height={130}>
+                    <BarChart data={data.busiestHours}>
+                      <XAxis dataKey="label" tick={{ fontSize: 9, fill: "#86868b" }} axisLine={false} tickLine={false} />
+                      <YAxis hide />
+                      <Tooltip contentStyle={tooltipStyle} formatter={(value) => [value, "Meetings"]} />
+                      <Bar dataKey="count" radius={[3, 3, 0, 0]} maxBarSize={18} name="Meetings">
+                        {data.busiestHours.map((entry, index) => {
+                          const peak = Math.max(...data.busiestHours.map(h => h.count));
+                          return <Cell key={index} fill={entry.count === peak && peak > 0 ? "#0071e3" : entry.count > 0 ? "#c6e3ff" : "#f0f0f0"} />;
+                        })}
+                      </Bar>
+                    </BarChart>
                   </ResponsiveContainer>
                 </div>
               </div>
 
-              {/* Recent Emails + Files */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {/* ── Top Contacts + Recent Emails + Recent Files ── */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+                {/* Top Contacts */}
                 <div className="bg-white rounded-2xl shadow-sm overflow-hidden card-hover">
-                  <div className="px-5 pt-5 pb-3 flex items-center justify-between">
-                    <p className="text-[13px] text-[#86868b] font-medium">Recent Emails</p>
-                    <button onClick={() => setTab("email")} className="text-[#0071e3] text-xs font-medium">View All</button>
+                  <div className="px-4 pt-3 pb-1 flex items-center justify-between">
+                    <p className="text-[13px] text-[#86868b] font-medium">Top Contacts</p>
+                    <button onClick={() => setTab("email")} className="text-[#0071e3] text-[11px] font-medium">All</button>
                   </div>
                   <div className="divide-y divide-[#f5f5f5]">
-                    {data.email.recent.slice(0, 5).map((email) => (
-                      <div key={email.id} className="px-5 py-3 hover:bg-[#f9f9f9] transition-colors">
-                        <div className="flex items-center gap-2">
+                    {data.topContacts.slice(0, 6).map((contact, i) => {
+                      const maxCount = data.topContacts[0]?.count || 1;
+                      return (
+                        <div key={contact.email} className="px-4 py-1.5 flex items-center gap-2">
+                          <div className="w-6 h-6 rounded-full bg-gradient-to-br from-[#0071e3] to-[#5856d6] flex items-center justify-center text-white text-[9px] font-bold shrink-0">
+                            {contact.name.charAt(0).toUpperCase()}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[12px] font-medium truncate">{contact.name}</p>
+                            <div className="mt-0.5 h-1 bg-[#f0f0f0] rounded-full overflow-hidden">
+                              <motion.div
+                                className="h-full bg-gradient-to-r from-[#0071e3] to-[#5856d6] rounded-full"
+                                initial={{ width: 0 }}
+                                animate={{ width: `${(contact.count / maxCount) * 100}%` }}
+                                transition={{ duration: 0.8, delay: i * 0.08 }}
+                              />
+                            </div>
+                          </div>
+                          <span className="text-[10px] text-[#86868b] font-medium tabular-nums shrink-0">{contact.count}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Recent Emails */}
+                <div className="bg-white rounded-2xl shadow-sm overflow-hidden card-hover">
+                  <div className="px-4 pt-3 pb-1 flex items-center justify-between">
+                    <p className="text-[13px] text-[#86868b] font-medium">Recent Emails</p>
+                    <button onClick={() => setTab("email")} className="text-[#0071e3] text-[11px] font-medium">All</button>
+                  </div>
+                  <div className="divide-y divide-[#f5f5f5]">
+                    {data.email.recent.slice(0, 7).map((email) => (
+                      <div key={email.id} className="px-4 py-1.5 hover:bg-[#f9f9f9] transition-colors">
+                        <div className="flex items-center gap-1.5">
                           {email.isUnread && <div className="w-1.5 h-1.5 rounded-full bg-[#0071e3] shrink-0" />}
-                          <p className={`text-sm truncate flex-1 ${email.isUnread ? "font-semibold" : "text-[#1d1d1f]/80"}`}>
+                          <p className={`text-[12px] truncate flex-1 ${email.isUnread ? "font-semibold" : "text-[#1d1d1f]/70"}`}>
                             {parseFromName(email.from)}
                           </p>
-                          <span className="text-[11px] text-[#86868b] shrink-0">{formatRelative(email.date)}</span>
+                          <span className="text-[10px] text-[#86868b] shrink-0">{formatRelative(email.date)}</span>
                         </div>
-                        <p className="text-[13px] text-[#1d1d1f]/60 truncate mt-0.5">{email.subject || "(no subject)"}</p>
+                        <p className="text-[11px] text-[#86868b] truncate">{email.subject || "(no subject)"}</p>
                       </div>
                     ))}
                   </div>
                 </div>
 
+                {/* Recent Files */}
                 <div className="bg-white rounded-2xl shadow-sm overflow-hidden card-hover">
-                  <div className="px-5 pt-5 pb-3 flex items-center justify-between">
+                  <div className="px-4 pt-3 pb-1 flex items-center justify-between">
                     <p className="text-[13px] text-[#86868b] font-medium">Recent Files</p>
-                    <button onClick={() => setTab("drive")} className="text-[#0071e3] text-xs font-medium">View All</button>
+                    <button onClick={() => setTab("drive")} className="text-[#0071e3] text-[11px] font-medium">All</button>
                   </div>
                   <div className="divide-y divide-[#f5f5f5]">
-                    {data.drive.recentFiles.slice(0, 5).map((file) => (
+                    {data.drive.recentFiles.slice(0, 7).map((file) => (
                       <a key={file.id} href={file.webViewLink} target="_blank" rel="noopener noreferrer"
-                        className="px-5 py-3 flex items-center gap-3 hover:bg-[#f9f9f9] transition-colors block">
+                        className="px-4 py-1.5 flex items-center gap-2 hover:bg-[#f9f9f9] transition-colors block">
                         <div className={`w-2 h-2 rounded-full ${mimeDot(file.mimeType)} shrink-0`} />
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium truncate">{file.name}</p>
-                          <p className="text-[11px] text-[#86868b]">{mimeLabel(file.mimeType)} \u00b7 {formatRelative(file.modifiedTime)}</p>
+                          <p className="text-[12px] font-medium truncate">{file.name}</p>
+                          <p className="text-[10px] text-[#86868b]">{mimeLabel(file.mimeType)} {"\u00b7"} {formatRelative(file.modifiedTime)}</p>
                         </div>
                       </a>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* ── Open Tasks ── */}
+              {data.tasks.totalOpen > 0 && (
+                <div className="bg-white rounded-2xl shadow-sm overflow-hidden card-hover">
+                  <div className="px-4 pt-3 pb-1 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <p className="text-[13px] text-[#86868b] font-medium">Open Tasks</p>
+                      <span className="text-[10px] font-bold bg-[#f0f0f0] text-[#86868b] px-1.5 py-0.5 rounded-full leading-none">
+                        {data.tasks.totalOpen}
+                      </span>
+                    </div>
+                    <button onClick={() => setTab("tasks")} className="text-[#0071e3] text-[11px] font-medium">All Tasks</button>
+                  </div>
+                  <div className="grid grid-cols-1 lg:grid-cols-2 divide-y lg:divide-y-0 lg:divide-x divide-[#f0f0f0]">
+                    {data.tasks.lists.filter(l => l.open.length > 0).slice(0, 2).map((list) => (
+                      <div key={list.listName} className="px-4 py-2">
+                        <p className="text-[11px] font-semibold text-[#86868b] uppercase tracking-wider mb-1.5">{list.listName}</p>
+                        <div className="space-y-1">
+                          {list.open.slice(0, 4).map((task) => {
+                            const isOverdue = task.due && new Date(task.due) < new Date();
+                            return (
+                              <div key={task.id} className="flex items-start gap-2">
+                                <div className={`w-3 h-3 rounded-full border-2 shrink-0 mt-0.5 ${isOverdue ? "border-orange-400" : "border-[#d1d1d6]"}`} />
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-[12px] font-medium truncate">{task.title}</p>
+                                  {task.due && (
+                                    <p className={`text-[10px] ${isOverdue ? "text-orange-500 font-medium" : "text-[#86868b]"}`}>
+                                      {isOverdue ? "Overdue" : "Due"} {new Date(task.due).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                          {list.open.length > 4 && (
+                            <p className="text-[10px] text-[#86868b] ml-5">+{list.open.length - 4} more</p>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* ── Recently Sent ── */}
+              <div className="bg-white rounded-2xl shadow-sm overflow-hidden card-hover">
+                <div className="px-4 pt-3 pb-1">
+                  <p className="text-[13px] text-[#86868b] font-medium">Recently Sent</p>
+                </div>
+                <div className="grid grid-cols-1 lg:grid-cols-2 divide-y lg:divide-y-0 lg:divide-x divide-[#f0f0f0]">
+                  <div className="divide-y divide-[#f5f5f5]">
+                    {data.recentSent.slice(0, 4).map((sent) => (
+                      <div key={sent.id} className="px-4 py-1.5 hover:bg-[#f9f9f9] transition-colors">
+                        <div className="flex items-center gap-1.5">
+                          <svg className="w-3 h-3 text-emerald-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 19.5l15-15m0 0H8.25m11.25 0v11.25" />
+                          </svg>
+                          <p className="text-[12px] font-medium truncate flex-1">{parseFromName(sent.to)}</p>
+                          <span className="text-[10px] text-[#86868b] shrink-0">{formatRelative(sent.date)}</span>
+                        </div>
+                        <p className="text-[11px] text-[#86868b] truncate ml-[18px]">{sent.subject || "(no subject)"}</p>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="divide-y divide-[#f5f5f5]">
+                    {data.recentSent.slice(4, 8).map((sent) => (
+                      <div key={sent.id} className="px-4 py-1.5 hover:bg-[#f9f9f9] transition-colors">
+                        <div className="flex items-center gap-1.5">
+                          <svg className="w-3 h-3 text-emerald-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 19.5l15-15m0 0H8.25m11.25 0v11.25" />
+                          </svg>
+                          <p className="text-[12px] font-medium truncate flex-1">{parseFromName(sent.to)}</p>
+                          <span className="text-[10px] text-[#86868b] shrink-0">{formatRelative(sent.date)}</span>
+                        </div>
+                        <p className="text-[11px] text-[#86868b] truncate ml-[18px]">{sent.subject || "(no subject)"}</p>
+                      </div>
                     ))}
                   </div>
                 </div>

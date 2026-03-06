@@ -17,6 +17,8 @@ async function getTodayEvents() {
     singleEvents: true,
     orderBy: "startTime",
     maxResults: 20,
+    fields:
+      "items(summary,start,end,hangoutLink,location,description,conferenceData,attendees)",
   });
   return res.data.items || [];
 }
@@ -58,6 +60,8 @@ async function getUpcomingEvents() {
     singleEvents: true,
     orderBy: "startTime",
     maxResults: 50,
+    fields:
+      "items(summary,start,end,hangoutLink,location,description,conferenceData,attendees)",
   });
   return res.data.items || [];
 }
