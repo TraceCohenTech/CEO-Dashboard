@@ -237,6 +237,11 @@ function parseFromName(from: string) {
   return match ? match[1].trim() : from.split("@")[0];
 }
 
+function extractEmail(from: string) {
+  const match = from.match(/<([^>]+)>/);
+  return match ? match[1].toLowerCase() : from.includes("@") ? from.trim().toLowerCase() : "";
+}
+
 function formatBytes(bytes: string) {
   const b = parseInt(bytes);
   if (b === 0) return "0 B";
@@ -745,60 +750,255 @@ export default function Dashboard() {
               transition={{ duration: 0.3 }}
               className="space-y-4"
             >
-              {/* ── Pulse Strip ── */}
-              <div className="bg-white rounded-2xl shadow-sm px-5 py-3 flex items-center justify-between flex-wrap gap-y-2">
-                <div className="flex items-center divide-x divide-[#e5e5e5]">
-                  {[
-                    {
-                      n: data.email.unreadCount,
-                      label: "unread",
-                      accent: data.email.unreadCount > 50 ? "text-red-500" : "text-[#0071e3]",
-                      wow: emailWow,
-                    },
-                    {
-                      n: data.today.meetingsLeft,
-                      label: `meeting${data.today.meetingsLeft !== 1 ? "s" : ""} left`,
-                      accent: "text-[#1d1d1f]",
-                      wow: null,
-                    },
-                    {
-                      n: data.tasks.overdue,
-                      label: "overdue",
-                      accent: data.tasks.overdue > 0 ? "text-orange-500" : "text-[#1d1d1f]",
-                      wow: null,
-                    },
-                    {
-                      n: data.today.sentEmails,
-                      label: "sent today",
-                      accent: "text-emerald-600",
-                      wow: null,
-                    },
-                  ].map((item, i) => (
-                    <div key={i} className="flex items-baseline gap-1.5 px-4 first:pl-0 last:pr-0">
-                      <span className={`text-xl font-bold tabular-nums ${item.accent}`}>
-                        {typeof item.n === "number" ? <AnimatedNumber value={item.n} /> : item.n}
-                      </span>
-                      <span className="text-[12px] text-[#86868b]">{item.label}</span>
-                      {item.wow && (
-                        <span className={`text-[10px] font-semibold ${item.wow.up ? "text-emerald-500" : "text-red-400"}`}>
-                          {item.wow.up ? "\u2191" : "\u2193"}{Math.abs(item.wow.pct)}%
-                        </span>
+
+              {/* ── Needs Your Decision ── */}
+              {(() => {
+                const overdueTasks = data.tasks.lists
+                  .flatMap((l) => l.open)
+                  .filter((t) => t.due && new Date(t.due) < new Date());
+
+                const topContactEmails = new Set(
+                  data.topContacts.slice(0, 10).map((c) => c.email.toLowerCase())
+                );
+                const allUnread = data.email.recent.filter((e) => e.isUnread);
+                const vipUnread = allUnread.filter((e) => {
+                  const email = extractEmail(e.from);
+                  return email && topContactEmails.has(email);
+                });
+                const otherUnread = allUnread.filter((e) => !vipUnread.includes(e));
+                const followUps = overview?.pendingFollowUps || [];
+
+                type ActionItem =
+                  | { type: "overdue"; task: TaskItem }
+                  | { type: "vip-unread"; email: Email }
+                  | { type: "follow-up"; followUp: PendingFollowUp }
+                  | { type: "unread"; email: Email };
+
+                const actions: ActionItem[] = [
+                  ...overdueTasks.slice(0, 5).map((t) => ({ type: "overdue" as const, task: t })),
+                  ...vipUnread.slice(0, 5).map((e) => ({ type: "vip-unread" as const, email: e })),
+                  ...followUps.slice(0, 4).map((f) => ({ type: "follow-up" as const, followUp: f })),
+                  ...otherUnread.slice(0, 3).map((e) => ({ type: "unread" as const, email: e })),
+                ];
+
+                return (
+                  <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
+                    <div className="px-4 pt-3 pb-2 flex items-center gap-2 border-b border-[#f0f0f0]">
+                      <div className={`w-2 h-2 rounded-full shrink-0 ${actions.length > 0 ? "bg-red-500" : "bg-emerald-500"}`} />
+                      <p className="text-[14px] font-semibold">Needs Your Decision</p>
+                      {actions.length > 0 && (
+                        <span className="text-[11px] font-bold bg-red-100 text-red-600 px-2 py-0.5 rounded-full leading-none">{actions.length}</span>
                       )}
                     </div>
-                  ))}
-                </div>
-                <div className="flex items-baseline gap-1.5">
-                  <span className="text-xl font-bold tabular-nums">{data.calendar.meetingHoursThisWeek}h</span>
-                  <span className="text-[12px] text-[#86868b]">meetings this week</span>
-                  {hoursWow && (
-                    <span className={`text-[10px] font-semibold ${hoursWow.up ? "text-emerald-500" : "text-red-400"}`}>
-                      {hoursWow.up ? "\u2191" : "\u2193"}{Math.abs(hoursWow.pct)}%
-                    </span>
-                  )}
-                </div>
+                    {actions.length === 0 && !overviewLoading ? (
+                      <div className="px-4 py-8 flex flex-col items-center">
+                        <div className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center mb-2">
+                          <svg className="w-5 h-5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                          </svg>
+                        </div>
+                        <p className="text-[14px] font-semibold text-[#1d1d1f]">All clear</p>
+                        <p className="text-[12px] text-[#86868b]">Nothing needs your attention right now</p>
+                      </div>
+                    ) : (
+                      <div className="divide-y divide-[#f5f5f5]">
+                        {actions.map((action) => {
+                          if (action.type === "overdue") {
+                            return (
+                              <div key={`ot-${action.task.id}`} className="px-4 py-2.5 flex items-start gap-3 hover:bg-[#fef9f5] transition-colors">
+                                <div className="w-5 h-5 rounded-full border-2 border-orange-400 shrink-0 mt-0.5 flex items-center justify-center">
+                                  <span className="text-[8px] font-bold text-orange-500">!</span>
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-[13px] font-medium truncate">{action.task.title}</p>
+                                  <p className="text-[11px] text-orange-500 font-medium">
+                                    {"Overdue \u00b7 due "}
+                                    {new Date(action.task.due!).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                                  </p>
+                                </div>
+                                <span className="text-[10px] bg-orange-100 text-orange-600 px-1.5 py-0.5 rounded font-medium shrink-0">Task</span>
+                              </div>
+                            );
+                          }
+                          if (action.type === "vip-unread") {
+                            return (
+                              <div key={`vu-${action.email.id}`} className="px-4 py-2.5 flex items-start gap-3 hover:bg-[#f0f7ff] transition-colors">
+                                <div className="w-5 h-5 rounded-full bg-[#0071e3] flex items-center justify-center shrink-0 mt-0.5">
+                                  <span className="text-[9px] font-bold text-white">{"\u2605"}</span>
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-[13px] font-semibold truncate">{parseFromName(action.email.from)}</p>
+                                  <p className="text-[11px] text-[#86868b] truncate">{action.email.subject || "(no subject)"}</p>
+                                </div>
+                                <div className="flex items-center gap-2 shrink-0">
+                                  <span className="text-[10px] text-[#86868b]">{formatRelative(action.email.date)}</span>
+                                  <span className="text-[10px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded font-medium">VIP</span>
+                                </div>
+                              </div>
+                            );
+                          }
+                          if (action.type === "follow-up") {
+                            return (
+                              <div key={`fu-${action.followUp.id}`} className="px-4 py-2.5 flex items-start gap-3 hover:bg-[#f8f5ff] transition-colors">
+                                <div className="w-5 h-5 rounded-full bg-[#5856d6] flex items-center justify-center shrink-0 mt-0.5">
+                                  <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 19.5l15-15m0 0H8.25m11.25 0v11.25" />
+                                  </svg>
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-[13px] font-medium truncate">{"To: "}{parseFromName(action.followUp.to)}</p>
+                                  <p className="text-[11px] text-[#86868b] truncate">{action.followUp.subject || "(no subject)"}{" \u00b7 no reply"}</p>
+                                </div>
+                                <div className="flex items-center gap-2 shrink-0">
+                                  <span className="text-[10px] text-[#86868b]">{formatRelative(action.followUp.date)}</span>
+                                  <span className="text-[10px] bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded font-medium">Follow up</span>
+                                </div>
+                              </div>
+                            );
+                          }
+                          return (
+                            <div key={`ur-${action.email.id}`} className="px-4 py-2.5 flex items-start gap-3 hover:bg-[#f9f9f9] transition-colors">
+                              <div className="w-5 h-5 rounded-full bg-[#0071e3]/15 flex items-center justify-center shrink-0 mt-0.5">
+                                <div className="w-2 h-2 rounded-full bg-[#0071e3]" />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-[13px] font-medium truncate">{parseFromName(action.email.from)}</p>
+                                <p className="text-[11px] text-[#86868b] truncate">{action.email.subject || "(no subject)"}</p>
+                              </div>
+                              <span className="text-[10px] text-[#86868b] shrink-0">{formatRelative(action.email.date)}</span>
+                            </div>
+                          );
+                        })}
+                        {overviewLoading && !overview && (
+                          <div className="px-4 py-2 space-y-1.5">
+                            <div className="skeleton h-3 w-3/4" />
+                            <div className="skeleton h-3 w-1/2" />
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
+              {/* ── Waiting On Others + Your Commitments ── */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                {/* Waiting On Others */}
+                {(() => {
+                  const followUps = overview?.pendingFollowUps || [];
+                  const followUpKeys = new Set(followUps.map((fu) => `${fu.to}::${fu.subject}`));
+                  const recentWaiting = data.recentSent
+                    .filter((s) => !followUpKeys.has(`${s.to}::${s.subject}`))
+                    .slice(0, 4);
+
+                  const allWaiting = [
+                    ...followUps.map((fu) => ({
+                      id: fu.id,
+                      to: fu.to,
+                      subject: fu.subject,
+                      date: fu.date,
+                      age: Math.floor((Date.now() - new Date(fu.date).getTime()) / 86400000),
+                      noReply: true,
+                    })),
+                    ...recentWaiting.map((s) => ({
+                      id: s.id,
+                      to: s.to,
+                      subject: s.subject,
+                      date: s.date,
+                      age: Math.floor((Date.now() - new Date(s.date).getTime()) / 86400000),
+                      noReply: false,
+                    })),
+                  ].sort((a, b) => b.age - a.age);
+
+                  return (
+                    <div className="bg-white rounded-2xl shadow-sm overflow-hidden card-hover">
+                      <div className="px-4 pt-3 pb-1 flex items-center gap-2">
+                        <p className="text-[13px] text-[#86868b] font-medium">Waiting On Others</p>
+                        {allWaiting.length > 0 && (
+                          <span className="text-[10px] font-bold bg-[#f0f0f0] text-[#86868b] px-1.5 py-0.5 rounded-full leading-none">{allWaiting.length}</span>
+                        )}
+                      </div>
+                      {overviewLoading && !overview ? (
+                        <div className="px-4 py-3 space-y-2">
+                          <div className="skeleton h-3 w-3/4" />
+                          <div className="skeleton h-3 w-1/2" />
+                        </div>
+                      ) : allWaiting.length === 0 ? (
+                        <div className="px-4 py-4 flex items-center gap-2">
+                          <div className="w-6 h-6 rounded-full bg-emerald-100 flex items-center justify-center">
+                            <svg className="w-3 h-3 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                            </svg>
+                          </div>
+                          <p className="text-[12px] text-[#86868b]">No outstanding items</p>
+                        </div>
+                      ) : (
+                        <div className="divide-y divide-[#f5f5f5]">
+                          {allWaiting.slice(0, 8).map((item) => (
+                            <div key={item.id} className="px-4 py-2 flex items-center gap-3 hover:bg-[#f9f9f9] transition-colors">
+                              <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${item.age >= 5 ? "bg-red-400" : item.age >= 3 ? "bg-orange-400" : "bg-[#d1d1d6]"}`} />
+                              <div className="flex-1 min-w-0">
+                                <p className="text-[12px] font-medium truncate">{parseFromName(item.to)}</p>
+                                <p className="text-[11px] text-[#86868b] truncate">
+                                  {item.subject || "(no subject)"}
+                                  {item.noReply ? " \u00b7 no reply" : ""}
+                                </p>
+                              </div>
+                              <span className={`text-[10px] font-medium shrink-0 ${item.age >= 5 ? "text-red-500" : item.age >= 3 ? "text-orange-500" : "text-[#86868b]"}`}>
+                                {item.age}d ago
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {/* Your Commitments */}
+                {(() => {
+                  const commitmentPattern = /\b(i'll|i will|let me|i can send|i'm going to|will send|will follow|will get back|will share|by (monday|tuesday|wednesday|thursday|friday|end of|eod|eow))/i;
+                  const commitments = data.recentSent
+                    .filter((s) => commitmentPattern.test(s.snippet))
+                    .slice(0, 6);
+
+                  return (
+                    <div className="bg-white rounded-2xl shadow-sm overflow-hidden card-hover">
+                      <div className="px-4 pt-3 pb-1 flex items-center gap-2">
+                        <p className="text-[13px] text-[#86868b] font-medium">Your Commitments</p>
+                        <span className="text-[10px] text-[#d1d1d6]">from sent emails</span>
+                      </div>
+                      {commitments.length === 0 ? (
+                        <div className="px-4 py-4 flex items-center gap-2">
+                          <div className="w-6 h-6 rounded-full bg-[#f0f0f0] flex items-center justify-center">
+                            <svg className="w-3 h-3 text-[#86868b]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                            </svg>
+                          </div>
+                          <p className="text-[12px] text-[#86868b]">No detected commitments</p>
+                        </div>
+                      ) : (
+                        <div className="divide-y divide-[#f5f5f5]">
+                          {commitments.map((sent) => (
+                            <div key={sent.id} className="px-4 py-2 flex items-start gap-3 hover:bg-[#f9f9f9] transition-colors">
+                              <svg className="w-4 h-4 text-[#0071e3] shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                              </svg>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-[12px] font-medium truncate">{"To: "}{parseFromName(sent.to)}</p>
+                                <p className="text-[11px] text-[#86868b] line-clamp-2 leading-relaxed">{sent.snippet}</p>
+                              </div>
+                              <span className="text-[10px] text-[#86868b] shrink-0">{formatRelative(sent.date)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
 
-              {/* ── Next Meeting + Today's Schedule ── */}
+              {/* ── Today's Plan ── */}
               {(() => {
                 const now = new Date();
                 const upNextEvents = overview?.upcomingEvents || data.today.events;
@@ -853,7 +1053,6 @@ export default function Dashboard() {
                 }
 
                 const nextEvent = displayEvents[0];
-                const restEvents = displayEvents.slice(1);
 
                 return (
                   <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
@@ -956,73 +1155,7 @@ export default function Dashboard() {
                 );
               })()}
 
-              {/* ── Inbox Intelligence ── */}
-              {(() => {
-                const cats = data.emailCategories;
-                const total = cats.totalInbox || 1;
-                const catColors: Record<string, string> = {
-                  dealFlow: "#0071e3",
-                  intros: "#5856d6",
-                  portfolio: "#34c759",
-                  newsletters: "#86868b",
-                };
-
-                return (
-                  <div className="bg-white rounded-2xl shadow-sm overflow-hidden card-hover">
-                    <div className="px-4 pt-3 pb-2 flex items-center justify-between">
-                      <p className="text-[13px] text-[#86868b] font-medium">Inbox Intelligence</p>
-                      <button onClick={() => setTab("inbox")} className="text-[#0071e3] text-[11px] font-medium">Details</button>
-                    </div>
-                    {/* Stacked bar */}
-                    <div className="px-4 pb-2">
-                      <div className="flex rounded-lg overflow-hidden h-2.5">
-                        {cats.categories.map((cat) => {
-                          const pct = (cat.count / total) * 100;
-                          if (pct < 0.5) return null;
-                          return (
-                            <div
-                              key={cat.key}
-                              className="transition-all"
-                              style={{ width: `${pct}%`, backgroundColor: catColors[cat.key] || "#d1d1d6" }}
-                              title={`${cat.label}: ${cat.count}`}
-                            />
-                          );
-                        })}
-                        {cats.otherCount > 0 && (
-                          <div style={{ width: `${(cats.otherCount / total) * 100}%`, backgroundColor: "#e5e5e5" }} title={`Other: ${cats.otherCount}`} />
-                        )}
-                      </div>
-                    </div>
-                    {/* Category rows */}
-                    <div className="grid grid-cols-2 lg:grid-cols-4 divide-x divide-[#f0f0f0] border-t border-[#f0f0f0]">
-                      {cats.categories.map((cat) => (
-                        <div key={cat.key} className="px-4 py-2.5">
-                          <div className="flex items-center gap-1.5 mb-1.5">
-                            <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: catColors[cat.key] || "#d1d1d6" }} />
-                            <span className="text-[11px] font-semibold text-[#1d1d1f]">{cat.label}</span>
-                            <span className="text-[11px] font-bold text-[#86868b] ml-auto">{cat.count}</span>
-                          </div>
-                          {cat.previews.length > 0 ? (
-                            <div className="space-y-1">
-                              {cat.previews.slice(0, 2).map((p) => (
-                                <p key={p.id} className="text-[11px] text-[#86868b] truncate leading-tight">
-                                  <span className="text-[#1d1d1f]/70 font-medium">{parseFromName(p.from)}</span>
-                                  {" \u00b7 "}
-                                  {p.subject || "(no subject)"}
-                                </p>
-                              ))}
-                            </div>
-                          ) : (
-                            <p className="text-[10px] text-[#d1d1d6]">No recent</p>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* ── Meeting Prep + Action Required row ── */}
+              {/* ── Meeting Prep + Inbox Intelligence ── */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
                 {/* Meeting Prep */}
                 <div className="bg-white rounded-2xl shadow-sm overflow-hidden card-hover">
@@ -1094,170 +1227,72 @@ export default function Dashboard() {
                   )}
                 </div>
 
-                {/* Action Required */}
+                {/* Inbox Intelligence */}
                 {(() => {
-                  const overdueTasks = data.tasks.lists
-                    .flatMap((l) => l.open)
-                    .filter((t) => t.due && new Date(t.due) < new Date());
-                  const importantUnread = data.email.recent.filter((e) => e.isUnread);
-                  const followUps = overview?.pendingFollowUps || [];
-                  const totalActions = overdueTasks.length + importantUnread.length + followUps.length;
+                  const cats = data.emailCategories;
+                  const total = cats.totalInbox || 1;
+                  const catColors: Record<string, string> = {
+                    dealFlow: "#0071e3",
+                    intros: "#5856d6",
+                    portfolio: "#34c759",
+                    newsletters: "#86868b",
+                  };
 
                   return (
                     <div className="bg-white rounded-2xl shadow-sm overflow-hidden card-hover">
-                      <div className="px-4 pt-3 pb-1 flex items-center gap-2">
-                        <p className="text-[13px] text-[#86868b] font-medium">Needs Attention</p>
-                        {totalActions > 0 && (
-                          <span className="text-[10px] font-bold bg-red-100 text-red-600 px-1.5 py-0.5 rounded-full leading-none">{totalActions}</span>
-                        )}
+                      <div className="px-4 pt-3 pb-2 flex items-center justify-between">
+                        <p className="text-[13px] text-[#86868b] font-medium">Inbox Intelligence</p>
+                        <button onClick={() => setTab("inbox")} className="text-[#0071e3] text-[11px] font-medium">Details</button>
                       </div>
-                      {totalActions === 0 && !overviewLoading ? (
-                        <div className="px-4 py-6 flex flex-col items-center">
-                          <div className="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center mb-2">
-                            <svg className="w-4 h-4 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                            </svg>
-                          </div>
-                          <p className="text-[13px] font-medium text-[#1d1d1f]">All clear</p>
-                          <p className="text-[11px] text-[#86868b]">Nothing needs your attention right now</p>
-                        </div>
-                      ) : (
-                        <div className="divide-y divide-[#f5f5f5]">
-                          {/* Overdue tasks */}
-                          {overdueTasks.slice(0, 3).map((task) => (
-                            <div key={task.id} className="px-4 py-2 flex items-start gap-2">
-                              <div className="w-4 h-4 rounded-full border-2 border-orange-400 shrink-0 mt-0.5" />
-                              <div className="flex-1 min-w-0">
-                                <p className="text-[12px] font-medium truncate">{task.title}</p>
-                                <p className="text-[10px] text-orange-500">
-                                  Overdue {"\u00b7"} {new Date(task.due!).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
-                                </p>
-                              </div>
-                            </div>
-                          ))}
-                          {/* Unread emails */}
-                          {importantUnread.slice(0, 3).map((email) => (
-                            <div key={email.id} className="px-4 py-2 flex items-start gap-2">
-                              <div className="w-4 h-4 rounded-full bg-[#0071e3] flex items-center justify-center shrink-0 mt-0.5">
-                                <div className="w-1.5 h-1.5 rounded-full bg-white" />
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <p className="text-[12px] font-medium truncate">{parseFromName(email.from)}</p>
-                                <p className="text-[10px] text-[#86868b] truncate">{email.subject || "(no subject)"}</p>
-                              </div>
-                              <span className="text-[10px] text-[#86868b] shrink-0 mt-0.5">{formatRelative(email.date)}</span>
-                            </div>
-                          ))}
-                          {/* Pending follow-ups */}
-                          {overviewLoading && !overview && (
-                            <div className="px-4 py-2 space-y-1.5">
-                              <div className="skeleton h-3 w-3/4" />
-                              <div className="skeleton h-3 w-1/2" />
-                            </div>
+                      <div className="px-4 pb-2">
+                        <div className="flex rounded-lg overflow-hidden h-2.5">
+                          {cats.categories.map((cat) => {
+                            const pct = (cat.count / total) * 100;
+                            if (pct < 0.5) return null;
+                            return (
+                              <div
+                                key={cat.key}
+                                className="transition-all"
+                                style={{ width: `${pct}%`, backgroundColor: catColors[cat.key] || "#d1d1d6" }}
+                                title={`${cat.label}: ${cat.count}`}
+                              />
+                            );
+                          })}
+                          {cats.otherCount > 0 && (
+                            <div style={{ width: `${(cats.otherCount / total) * 100}%`, backgroundColor: "#e5e5e5" }} title={`Other: ${cats.otherCount}`} />
                           )}
-                          {followUps.slice(0, 3).map((fu) => (
-                            <div key={fu.id} className="px-4 py-2 flex items-start gap-2">
-                              <div className="w-4 h-4 rounded-full bg-[#5856d6] flex items-center justify-center shrink-0 mt-0.5">
-                                <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                                  <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 19.5l15-15m0 0H8.25m11.25 0v11.25" />
-                                </svg>
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <p className="text-[12px] font-medium truncate">To: {parseFromName(fu.to)}</p>
-                                <p className="text-[10px] text-[#86868b] truncate">{fu.subject || "(no subject)"} {"\u00b7"} no reply</p>
-                              </div>
-                              <span className="text-[10px] text-[#86868b] shrink-0 mt-0.5">{formatRelative(fu.date)}</span>
-                            </div>
-                          ))}
                         </div>
-                      )}
+                      </div>
+                      <div className="divide-y divide-[#f5f5f5] border-t border-[#f0f0f0]">
+                        {cats.categories.map((cat) => (
+                          <div key={cat.key} className="px-4 py-2">
+                            <div className="flex items-center gap-1.5 mb-1">
+                              <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: catColors[cat.key] || "#d1d1d6" }} />
+                              <span className="text-[11px] font-semibold text-[#1d1d1f]">{cat.label}</span>
+                              <span className="text-[11px] font-bold text-[#86868b] ml-auto">{cat.count}</span>
+                            </div>
+                            {cat.previews.length > 0 ? (
+                              <div className="space-y-0.5">
+                                {cat.previews.slice(0, 2).map((p) => (
+                                  <p key={p.id} className="text-[11px] text-[#86868b] truncate leading-tight">
+                                    <span className="text-[#1d1d1f]/70 font-medium">{parseFromName(p.from)}</span>
+                                    {" \u00b7 "}
+                                    {p.subject || "(no subject)"}
+                                  </p>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="text-[10px] text-[#d1d1d6]">No recent</p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   );
                 })()}
               </div>
 
-              {/* ── Week + Volume + Busiest Hours ── */}
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
-                {/* Week at a Glance */}
-                <div className="bg-white rounded-2xl p-4 shadow-sm card-hover">
-                  <p className="text-[13px] text-[#86868b] font-medium mb-2">Week at a Glance</p>
-                  <div className="space-y-1.5">
-                    {data.calendar.weeklyData.map((day) => {
-                      const isToday = day.day === new Date().toLocaleDateString("en-US", { weekday: "short" });
-                      const maxMeetings = Math.max(...data.calendar.weeklyData.map((d) => d.meetings), 1);
-                      return (
-                        <div key={day.day} className={`flex items-center gap-2 ${isToday ? "bg-[#f0f7ff] -mx-1 px-1 py-0.5 rounded-md" : ""}`}>
-                          <span className={`text-[12px] w-7 shrink-0 font-mono ${isToday ? "font-bold text-[#0071e3]" : "text-[#86868b]"}`}>{day.day}</span>
-                          <div className="flex-1 h-3 bg-[#f0f0f0] rounded-full overflow-hidden">
-                            <motion.div
-                              className={`h-full rounded-full ${isToday ? "bg-[#0071e3]" : "bg-[#1d1d1f]/15"}`}
-                              initial={{ width: 0 }}
-                              animate={{ width: `${(day.meetings / maxMeetings) * 100}%` }}
-                              transition={{ duration: 0.6 }}
-                            />
-                          </div>
-                          <span className={`text-[10px] tabular-nums w-6 text-right ${isToday ? "font-bold" : "text-[#86868b]"}`}>{day.meetings}</span>
-                          <span className={`text-[10px] tabular-nums w-10 text-right ${isToday ? "font-medium text-[#0071e3]" : "text-[#d1d1d6]"}`}>{day.hours}h</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  <div className="mt-2 pt-2 border-t border-[#f0f0f0] flex items-center justify-between text-[11px]">
-                    <span className="text-[#86868b]">Focus time</span>
-                    <span className="font-semibold text-emerald-600">{Math.max(0, Math.round((45 - data.calendar.meetingHoursThisWeek) * 10) / 10)}h available</span>
-                  </div>
-                </div>
-
-                {/* Email Volume */}
-                <div className="bg-white rounded-2xl p-4 shadow-sm card-hover">
-                  <div className="flex items-center justify-between mb-2">
-                    <p className="text-[13px] text-[#86868b] font-medium">Email Volume</p>
-                    <div className="flex items-center gap-3 text-[10px]">
-                      <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-[#0071e3]" />Received</span>
-                      <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-[#34c759]" />Sent</span>
-                    </div>
-                  </div>
-                  <ResponsiveContainer width="100%" height={130}>
-                    <AreaChart data={data.email.dailyStats}>
-                      <defs>
-                        <linearGradient id="colorReceived" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#0071e3" stopOpacity={0.15} />
-                          <stop offset="95%" stopColor="#0071e3" stopOpacity={0} />
-                        </linearGradient>
-                        <linearGradient id="colorSent" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#34c759" stopOpacity={0.15} />
-                          <stop offset="95%" stopColor="#34c759" stopOpacity={0} />
-                        </linearGradient>
-                      </defs>
-                      <XAxis dataKey="dayLabel" tick={{ fontSize: 10, fill: "#86868b" }} axisLine={false} tickLine={false} />
-                      <YAxis hide />
-                      <Tooltip contentStyle={tooltipStyle} />
-                      <Area type="monotone" dataKey="received" stroke="#0071e3" strokeWidth={1.5} fillOpacity={1} fill="url(#colorReceived)" name="Received" />
-                      <Area type="monotone" dataKey="sent" stroke="#34c759" strokeWidth={1.5} fillOpacity={1} fill="url(#colorSent)" name="Sent" />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                </div>
-
-                {/* Busiest Hours */}
-                <div className="bg-white rounded-2xl p-4 shadow-sm card-hover">
-                  <p className="text-[13px] text-[#86868b] font-medium mb-2">Busiest Hours</p>
-                  <ResponsiveContainer width="100%" height={130}>
-                    <BarChart data={data.busiestHours}>
-                      <XAxis dataKey="label" tick={{ fontSize: 9, fill: "#86868b" }} axisLine={false} tickLine={false} />
-                      <YAxis hide />
-                      <Tooltip contentStyle={tooltipStyle} formatter={(value) => [value, "Meetings"]} />
-                      <Bar dataKey="count" radius={[3, 3, 0, 0]} maxBarSize={18} name="Meetings">
-                        {data.busiestHours.map((entry, index) => {
-                          const peak = Math.max(...data.busiestHours.map(h => h.count));
-                          return <Cell key={index} fill={entry.count === peak && peak > 0 ? "#0071e3" : entry.count > 0 ? "#c6e3ff" : "#f0f0f0"} />;
-                        })}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-
-              {/* ── Top Contacts + Recent Emails + Recent Files ── */}
+              {/* ── Quick Access: Top Contacts + Recent Emails + Recent Files ── */}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
                 {/* Top Contacts */}
                 <div className="bg-white rounded-2xl shadow-sm overflow-hidden card-hover">
@@ -1326,7 +1361,7 @@ export default function Dashboard() {
                         <div className={`w-2 h-2 rounded-full ${mimeDot(file.mimeType)} shrink-0`} />
                         <div className="flex-1 min-w-0">
                           <p className="text-[12px] font-medium truncate">{file.name}</p>
-                          <p className="text-[10px] text-[#86868b]">{mimeLabel(file.mimeType)} {"\u00b7"} {formatRelative(file.modifiedTime)}</p>
+                          <p className="text-[10px] text-[#86868b]">{mimeLabel(file.mimeType)}{" \u00b7 "}{formatRelative(file.modifiedTime)}</p>
                         </div>
                       </a>
                     ))}
@@ -1377,40 +1412,36 @@ export default function Dashboard() {
                 </div>
               )}
 
-              {/* ── Recently Sent ── */}
-              <div className="bg-white rounded-2xl shadow-sm overflow-hidden card-hover">
-                <div className="px-4 pt-3 pb-1">
-                  <p className="text-[13px] text-[#86868b] font-medium">Recently Sent</p>
+              {/* ── Pulse Strip (compact KPIs) ── */}
+              <div className="bg-white rounded-2xl shadow-sm px-5 py-2.5 flex items-center justify-between flex-wrap gap-y-2">
+                <div className="flex items-center divide-x divide-[#e5e5e5]">
+                  {[
+                    { n: data.email.unreadCount, label: "unread", accent: data.email.unreadCount > 50 ? "text-red-500" : "text-[#0071e3]", wow: emailWow },
+                    { n: data.today.meetingsLeft, label: `meeting${data.today.meetingsLeft !== 1 ? "s" : ""} left`, accent: "text-[#1d1d1f]", wow: null },
+                    { n: data.tasks.overdue, label: "overdue", accent: data.tasks.overdue > 0 ? "text-orange-500" : "text-[#1d1d1f]", wow: null },
+                    { n: data.today.sentEmails, label: "sent today", accent: "text-emerald-600", wow: null },
+                  ].map((item, i) => (
+                    <div key={i} className="flex items-baseline gap-1.5 px-4 first:pl-0 last:pr-0">
+                      <span className={`text-lg font-bold tabular-nums ${item.accent}`}>
+                        <AnimatedNumber value={item.n} />
+                      </span>
+                      <span className="text-[11px] text-[#86868b]">{item.label}</span>
+                      {item.wow && (
+                        <span className={`text-[10px] font-semibold ${item.wow.up ? "text-emerald-500" : "text-red-400"}`}>
+                          {item.wow.up ? "\u2191" : "\u2193"}{Math.abs(item.wow.pct)}%
+                        </span>
+                      )}
+                    </div>
+                  ))}
                 </div>
-                <div className="grid grid-cols-1 lg:grid-cols-2 divide-y lg:divide-y-0 lg:divide-x divide-[#f0f0f0]">
-                  <div className="divide-y divide-[#f5f5f5]">
-                    {data.recentSent.slice(0, 4).map((sent) => (
-                      <div key={sent.id} className="px-4 py-1.5 hover:bg-[#f9f9f9] transition-colors">
-                        <div className="flex items-center gap-1.5">
-                          <svg className="w-3 h-3 text-emerald-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 19.5l15-15m0 0H8.25m11.25 0v11.25" />
-                          </svg>
-                          <p className="text-[12px] font-medium truncate flex-1">{parseFromName(sent.to)}</p>
-                          <span className="text-[10px] text-[#86868b] shrink-0">{formatRelative(sent.date)}</span>
-                        </div>
-                        <p className="text-[11px] text-[#86868b] truncate ml-[18px]">{sent.subject || "(no subject)"}</p>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="divide-y divide-[#f5f5f5]">
-                    {data.recentSent.slice(4, 8).map((sent) => (
-                      <div key={sent.id} className="px-4 py-1.5 hover:bg-[#f9f9f9] transition-colors">
-                        <div className="flex items-center gap-1.5">
-                          <svg className="w-3 h-3 text-emerald-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 19.5l15-15m0 0H8.25m11.25 0v11.25" />
-                          </svg>
-                          <p className="text-[12px] font-medium truncate flex-1">{parseFromName(sent.to)}</p>
-                          <span className="text-[10px] text-[#86868b] shrink-0">{formatRelative(sent.date)}</span>
-                        </div>
-                        <p className="text-[11px] text-[#86868b] truncate ml-[18px]">{sent.subject || "(no subject)"}</p>
-                      </div>
-                    ))}
-                  </div>
+                <div className="flex items-baseline gap-1.5">
+                  <span className="text-lg font-bold tabular-nums">{data.calendar.meetingHoursThisWeek}h</span>
+                  <span className="text-[11px] text-[#86868b]">meetings this week</span>
+                  {hoursWow && (
+                    <span className={`text-[10px] font-semibold ${hoursWow.up ? "text-emerald-500" : "text-red-400"}`}>
+                      {hoursWow.up ? "\u2191" : "\u2193"}{Math.abs(hoursWow.pct)}%
+                    </span>
+                  )}
                 </div>
               </div>
             </motion.div>
