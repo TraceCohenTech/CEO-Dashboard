@@ -760,7 +760,69 @@ export default function Dashboard() {
               className="space-y-4"
             >
 
-              {/* ── Needs Your Decision ── */}
+              {/* ── Meeting Load Warning + Inbox Zero ── */}
+              {(() => {
+                const todayEvents = data.today.events;
+                const todayMeetingHours = todayEvents.reduce((sum, e) => {
+                  const start = e.start?.dateTime;
+                  const end = e.end?.dateTime;
+                  if (!start || !end) return sum;
+                  return sum + (new Date(end).getTime() - new Date(start).getTime()) / 3600000;
+                }, 0);
+                const meetingCount = todayEvents.length;
+                const isHeavy = meetingCount >= 4 || todayMeetingHours >= 4;
+                const inboxPct = data.email.inboxTotal > 0
+                  ? Math.round(((data.email.inboxTotal - data.email.unreadCount) / data.email.inboxTotal) * 100)
+                  : 100;
+
+                return (
+                  <div className="flex gap-3">
+                    {/* Meeting Load */}
+                    <div className={`flex-1 rounded-2xl px-4 py-2.5 shadow-sm flex items-center gap-3 ${isHeavy ? "bg-orange-50 border border-orange-200" : "bg-white"}`}>
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${isHeavy ? "bg-orange-100" : "bg-[#f0f0f0]"}`}>
+                        <svg className={`w-4 h-4 ${isHeavy ? "text-orange-600" : "text-[#86868b]"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                        </svg>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-[13px] font-semibold ${isHeavy ? "text-orange-700" : "text-[#1d1d1f]"}`}>
+                          {isHeavy ? "Heavy meeting day" : "Today's load"}
+                        </p>
+                        <p className={`text-[11px] ${isHeavy ? "text-orange-600" : "text-[#86868b]"}`}>
+                          {meetingCount} meeting{meetingCount !== 1 ? "s" : ""}{" \u00b7 "}{Math.round(todayMeetingHours * 10) / 10}h
+                          {isHeavy && data.today.meetingsLeft > 0 && ` \u00b7 ${data.today.meetingsLeft} remaining`}
+                        </p>
+                      </div>
+                      {isHeavy && (
+                        <span className="text-[10px] bg-orange-100 text-orange-600 px-2 py-0.5 rounded-full font-semibold shrink-0">
+                          {Math.round(todayMeetingHours * 10) / 10}h booked
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Inbox Zero Progress */}
+                    <div className="w-52 bg-white rounded-2xl px-4 py-2.5 shadow-sm shrink-0">
+                      <div className="flex items-center justify-between mb-1">
+                        <p className="text-[11px] text-[#86868b] font-medium">Inbox Zero</p>
+                        <span className={`text-[13px] font-bold tabular-nums ${inboxPct >= 90 ? "text-emerald-600" : inboxPct >= 70 ? "text-[#0071e3]" : "text-orange-500"}`}>
+                          {inboxPct}%
+                        </span>
+                      </div>
+                      <div className="h-1.5 bg-[#f0f0f0] rounded-full overflow-hidden">
+                        <motion.div
+                          className={`h-full rounded-full ${inboxPct >= 90 ? "bg-emerald-500" : inboxPct >= 70 ? "bg-[#0071e3]" : "bg-orange-500"}`}
+                          initial={{ width: 0 }}
+                          animate={{ width: `${inboxPct}%` }}
+                          transition={{ duration: 0.8, ease: "easeOut" }}
+                        />
+                      </div>
+                      <p className="text-[10px] text-[#86868b] mt-0.5">{data.email.unreadCount} unread of {data.email.inboxTotal}</p>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* ── Needs Your Decision (grouped by type) ── */}
               {(() => {
                 const overdueTasks = data.tasks.lists
                   .flatMap((l) => l.open)
@@ -777,29 +839,26 @@ export default function Dashboard() {
                 const otherUnread = allUnread.filter((e) => !vipUnread.includes(e));
                 const followUps = (overview?.pendingFollowUps || []).filter((f) => !isSpamOrAutomated(f.to));
 
-                type ActionItem =
-                  | { type: "overdue"; task: TaskItem }
-                  | { type: "vip-unread"; email: Email }
-                  | { type: "follow-up"; followUp: PendingFollowUp }
-                  | { type: "unread"; email: Email };
+                // "They're waiting on you" — unread from top contacts that are 2+ days old
+                const twoDaysAgo = Date.now() - 2 * 86400000;
+                const owedResponses = allUnread.filter((e) => {
+                  const email = extractEmail(e.from);
+                  const isOld = new Date(e.date).getTime() < twoDaysAgo;
+                  return isOld && email && topContactEmails.has(email);
+                });
 
-                const actions: ActionItem[] = [
-                  ...overdueTasks.slice(0, 5).map((t) => ({ type: "overdue" as const, task: t })),
-                  ...vipUnread.slice(0, 5).map((e) => ({ type: "vip-unread" as const, email: e })),
-                  ...followUps.slice(0, 4).map((f) => ({ type: "follow-up" as const, followUp: f })),
-                  ...otherUnread.slice(0, 3).map((e) => ({ type: "unread" as const, email: e })),
-                ];
+                const totalActions = overdueTasks.length + vipUnread.length + owedResponses.length + followUps.length + otherUnread.length;
 
                 return (
                   <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
                     <div className="px-4 pt-3 pb-2 flex items-center gap-2 border-b border-[#f0f0f0]">
-                      <div className={`w-2 h-2 rounded-full shrink-0 ${actions.length > 0 ? "bg-red-500" : "bg-emerald-500"}`} />
+                      <div className={`w-2 h-2 rounded-full shrink-0 ${totalActions > 0 ? "bg-red-500" : "bg-emerald-500"}`} />
                       <p className="text-[14px] font-semibold">Needs Your Decision</p>
-                      {actions.length > 0 && (
-                        <span className="text-[11px] font-bold bg-red-100 text-red-600 px-2 py-0.5 rounded-full leading-none">{actions.length}</span>
+                      {totalActions > 0 && (
+                        <span className="text-[11px] font-bold bg-red-100 text-red-600 px-2 py-0.5 rounded-full leading-none">{totalActions}</span>
                       )}
                     </div>
-                    {actions.length === 0 && !overviewLoading ? (
+                    {totalActions === 0 && !overviewLoading ? (
                       <div className="px-4 py-8 flex flex-col items-center">
                         <div className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center mb-2">
                           <svg className="w-5 h-5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
@@ -810,74 +869,150 @@ export default function Dashboard() {
                         <p className="text-[12px] text-[#86868b]">Nothing needs your attention right now</p>
                       </div>
                     ) : (
-                      <div className="divide-y divide-[#f5f5f5]">
-                        {actions.map((action) => {
-                          if (action.type === "overdue") {
-                            return (
-                              <div key={`ot-${action.task.id}`} className="px-4 py-2.5 flex items-start gap-3 hover:bg-[#fef9f5] transition-colors">
-                                <div className="w-5 h-5 rounded-full border-2 border-orange-400 shrink-0 mt-0.5 flex items-center justify-center">
-                                  <span className="text-[8px] font-bold text-orange-500">!</span>
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                  <p className="text-[13px] font-medium truncate">{action.task.title}</p>
-                                  <p className="text-[11px] text-orange-500 font-medium">
-                                    {"Overdue \u00b7 due "}
-                                    {new Date(action.task.due!).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
-                                  </p>
-                                </div>
-                                <span className="text-[10px] bg-orange-100 text-orange-600 px-1.5 py-0.5 rounded font-medium shrink-0">Task</span>
-                              </div>
-                            );
-                          }
-                          if (action.type === "vip-unread") {
-                            return (
-                              <div key={`vu-${action.email.id}`} className="px-4 py-2.5 flex items-start gap-3 hover:bg-[#f0f7ff] transition-colors">
-                                <div className="w-5 h-5 rounded-full bg-[#0071e3] flex items-center justify-center shrink-0 mt-0.5">
-                                  <span className="text-[9px] font-bold text-white">{"\u2605"}</span>
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                  <p className="text-[13px] font-semibold truncate">{parseFromName(action.email.from)}</p>
-                                  <p className="text-[11px] text-[#86868b] truncate">{action.email.subject || "(no subject)"}</p>
-                                </div>
-                                <div className="flex items-center gap-2 shrink-0">
-                                  <span className="text-[10px] text-[#86868b]">{formatRelative(action.email.date)}</span>
-                                  <span className="text-[10px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded font-medium">VIP</span>
-                                </div>
-                              </div>
-                            );
-                          }
-                          if (action.type === "follow-up") {
-                            return (
-                              <div key={`fu-${action.followUp.id}`} className="px-4 py-2.5 flex items-start gap-3 hover:bg-[#f8f5ff] transition-colors">
-                                <div className="w-5 h-5 rounded-full bg-[#5856d6] flex items-center justify-center shrink-0 mt-0.5">
-                                  <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 19.5l15-15m0 0H8.25m11.25 0v11.25" />
-                                  </svg>
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                  <p className="text-[13px] font-medium truncate">{"To: "}{parseFromName(action.followUp.to)}</p>
-                                  <p className="text-[11px] text-[#86868b] truncate">{action.followUp.subject || "(no subject)"}{" \u00b7 no reply"}</p>
-                                </div>
-                                <div className="flex items-center gap-2 shrink-0">
-                                  <span className="text-[10px] text-[#86868b]">{formatRelative(action.followUp.date)}</span>
-                                  <span className="text-[10px] bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded font-medium">Follow up</span>
-                                </div>
-                              </div>
-                            );
-                          }
-                          return (
-                            <div key={`ur-${action.email.id}`} className="px-4 py-2.5 flex items-start gap-3 hover:bg-[#f9f9f9] transition-colors">
-                              <div className="w-5 h-5 rounded-full bg-[#0071e3]/15 flex items-center justify-center shrink-0 mt-0.5">
-                                <div className="w-2 h-2 rounded-full bg-[#0071e3]" />
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <p className="text-[13px] font-medium truncate">{parseFromName(action.email.from)}</p>
-                                <p className="text-[11px] text-[#86868b] truncate">{action.email.subject || "(no subject)"}</p>
-                              </div>
-                              <span className="text-[10px] text-[#86868b] shrink-0">{formatRelative(action.email.date)}</span>
+                      <div>
+                        {/* They're waiting on you */}
+                        {owedResponses.length > 0 && (
+                          <div>
+                            <div className="px-4 pt-2.5 pb-1">
+                              <p className="text-[10px] font-semibold text-red-500 uppercase tracking-wider">
+                                They&apos;re waiting on you ({owedResponses.length})
+                              </p>
                             </div>
-                          );
-                        })}
+                            <div className="divide-y divide-[#f5f5f5]">
+                              {owedResponses.slice(0, 4).map((email) => (
+                                <div key={`owed-${email.id}`} className="px-4 py-2 flex items-start gap-3 hover:bg-[#fef5f5] transition-colors">
+                                  <div className="w-5 h-5 rounded-full bg-red-500 flex items-center justify-center shrink-0 mt-0.5">
+                                    <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                    </svg>
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-[13px] font-semibold truncate">{parseFromName(email.from)}</p>
+                                    <p className="text-[11px] text-[#86868b] truncate">{email.subject || "(no subject)"}</p>
+                                  </div>
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    <span className="text-[10px] text-red-500 font-medium">{formatRelative(email.date)}</span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Overdue Tasks */}
+                        {overdueTasks.length > 0 && (
+                          <div>
+                            <div className="px-4 pt-2.5 pb-1 border-t border-[#f0f0f0]">
+                              <p className="text-[10px] font-semibold text-orange-500 uppercase tracking-wider">
+                                Overdue Tasks ({overdueTasks.length})
+                              </p>
+                            </div>
+                            <div className="divide-y divide-[#f5f5f5]">
+                              {overdueTasks.slice(0, 5).map((task) => (
+                                <div key={`ot-${task.id}`} className="px-4 py-2 flex items-start gap-3 hover:bg-[#fef9f5] transition-colors">
+                                  <div className="w-5 h-5 rounded-full border-2 border-orange-400 shrink-0 mt-0.5 flex items-center justify-center">
+                                    <span className="text-[8px] font-bold text-orange-500">!</span>
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-[13px] font-medium truncate">{task.title}</p>
+                                    <p className="text-[11px] text-orange-500 font-medium">
+                                      {"Due "}
+                                      {new Date(task.due!).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                                    </p>
+                                  </div>
+                                  <span className="text-[10px] bg-orange-100 text-orange-600 px-1.5 py-0.5 rounded font-medium shrink-0">Task</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* VIP Messages */}
+                        {vipUnread.length > 0 && (
+                          <div>
+                            <div className="px-4 pt-2.5 pb-1 border-t border-[#f0f0f0]">
+                              <p className="text-[10px] font-semibold text-[#0071e3] uppercase tracking-wider">
+                                VIP Messages ({vipUnread.length})
+                              </p>
+                            </div>
+                            <div className="divide-y divide-[#f5f5f5]">
+                              {vipUnread.slice(0, 5).map((email) => {
+                                const contactEmail = extractEmail(email.from);
+                                const contact = data.topContacts.find((c) => c.email.toLowerCase() === contactEmail);
+                                return (
+                                  <div key={`vu-${email.id}`} className="px-4 py-2 flex items-start gap-3 hover:bg-[#f0f7ff] transition-colors">
+                                    <div className="w-5 h-5 rounded-full bg-[#0071e3] flex items-center justify-center shrink-0 mt-0.5">
+                                      <span className="text-[9px] font-bold text-white">{"\u2605"}</span>
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                      <p className="text-[13px] font-semibold truncate">{parseFromName(email.from)}</p>
+                                      <p className="text-[11px] text-[#86868b] truncate">{email.subject || "(no subject)"}</p>
+                                    </div>
+                                    <div className="flex items-center gap-2 shrink-0">
+                                      {contact && (
+                                        <span className="text-[9px] text-[#86868b]">{contact.count} emails</span>
+                                      )}
+                                      <span className="text-[10px] text-[#86868b]">{formatRelative(email.date)}</span>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Pending Follow-ups */}
+                        {followUps.length > 0 && (
+                          <div>
+                            <div className="px-4 pt-2.5 pb-1 border-t border-[#f0f0f0]">
+                              <p className="text-[10px] font-semibold text-[#5856d6] uppercase tracking-wider">
+                                Awaiting Reply ({followUps.length})
+                              </p>
+                            </div>
+                            <div className="divide-y divide-[#f5f5f5]">
+                              {followUps.slice(0, 4).map((fu) => (
+                                <div key={`fu-${fu.id}`} className="px-4 py-2 flex items-start gap-3 hover:bg-[#f8f5ff] transition-colors">
+                                  <div className="w-5 h-5 rounded-full bg-[#5856d6] flex items-center justify-center shrink-0 mt-0.5">
+                                    <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                                      <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 19.5l15-15m0 0H8.25m11.25 0v11.25" />
+                                    </svg>
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-[13px] font-medium truncate">{"To: "}{parseFromName(fu.to)}</p>
+                                    <p className="text-[11px] text-[#86868b] truncate">{fu.subject || "(no subject)"}{" \u00b7 no reply"}</p>
+                                  </div>
+                                  <span className="text-[10px] text-[#86868b] shrink-0">{formatRelative(fu.date)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Other Unread */}
+                        {otherUnread.length > 0 && (
+                          <div>
+                            <div className="px-4 pt-2.5 pb-1 border-t border-[#f0f0f0]">
+                              <p className="text-[10px] font-semibold text-[#86868b] uppercase tracking-wider">
+                                Other Unread ({otherUnread.length})
+                              </p>
+                            </div>
+                            <div className="divide-y divide-[#f5f5f5]">
+                              {otherUnread.slice(0, 3).map((email) => (
+                                <div key={`ur-${email.id}`} className="px-4 py-2 flex items-start gap-3 hover:bg-[#f9f9f9] transition-colors">
+                                  <div className="w-5 h-5 rounded-full bg-[#0071e3]/15 flex items-center justify-center shrink-0 mt-0.5">
+                                    <div className="w-2 h-2 rounded-full bg-[#0071e3]" />
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-[13px] font-medium truncate">{parseFromName(email.from)}</p>
+                                    <p className="text-[11px] text-[#86868b] truncate">{email.subject || "(no subject)"}</p>
+                                  </div>
+                                  <span className="text-[10px] text-[#86868b] shrink-0">{formatRelative(email.date)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
                         {overviewLoading && !overview && (
                           <div className="px-4 py-2 space-y-1.5">
                             <div className="skeleton h-3 w-3/4" />
@@ -1062,17 +1197,29 @@ export default function Dashboard() {
                 }
 
                 const nextEvent = displayEvents[0];
+                const minutesUntil = nextEvent?.start?.dateTime
+                  ? Math.floor((new Date(nextEvent.start.dateTime).getTime() - Date.now()) / 60000)
+                  : null;
+                const isUrgent = minutesUntil !== null && minutesUntil >= 0 && minutesUntil <= 15;
 
                 return (
                   <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
                     {/* Next Meeting Hero */}
                     {nextEvent ? (
-                      <div className="bg-gradient-to-br from-[#1d1d1f] to-[#2d2d2f] rounded-2xl p-5 text-white shadow-lg card-hover flex flex-col justify-between">
+                      <div className={`rounded-2xl p-5 text-white shadow-lg card-hover flex flex-col justify-between ${
+                        isUrgent
+                          ? "bg-gradient-to-br from-red-600 to-red-700 ring-2 ring-red-400/50"
+                          : "bg-gradient-to-br from-[#1d1d1f] to-[#2d2d2f]"
+                      }`}>
                         <div>
                           <div className="flex items-center justify-between">
-                            <p className="text-[11px] text-white/40 font-medium uppercase tracking-wider">Next Up</p>
+                            <p className={`text-[11px] font-medium uppercase tracking-wider ${isUrgent ? "text-white/70" : "text-white/40"}`}>
+                              {isUrgent ? "Starting Soon" : "Next Up"}
+                            </p>
                             {nextEvent.start?.dateTime && (
-                              <span className="text-[11px] text-white/50 font-mono">{timeUntil(nextEvent.start.dateTime)}</span>
+                              <span className={`text-[11px] font-mono ${isUrgent ? "text-white font-bold" : "text-white/50"}`}>
+                                {timeUntil(nextEvent.start.dateTime)}
+                              </span>
                             )}
                           </div>
                           <p className="text-[17px] font-semibold mt-3 leading-snug">{nextEvent.summary || "Untitled"}</p>
@@ -1102,7 +1249,9 @@ export default function Dashboard() {
                           ) : <div />}
                           {nextEvent.hangoutLink && (
                             <a href={nextEvent.hangoutLink} target="_blank" rel="noopener noreferrer"
-                              className="bg-white/15 hover:bg-white/25 text-white text-[12px] font-medium px-4 py-1.5 rounded-lg transition-colors backdrop-blur-sm">
+                              className={`text-white text-[12px] font-medium px-4 py-1.5 rounded-lg transition-colors backdrop-blur-sm ${
+                                isUrgent ? "bg-white/30 hover:bg-white/40" : "bg-white/15 hover:bg-white/25"
+                              }`}>
                               Join Call
                             </a>
                           )}
